@@ -1,0 +1,7 @@
+node_modules/
+dist/
+release/
+test/shots/
+test/smoke-*.txt
+test/pkg-*.txt
+.vscode/

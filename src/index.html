@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dead Ground</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data: blob:"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="menu-bg"></div>
+    <div id="game"></div>
+    <div id="hud"></div>
+
+    <div id="ui">
+      <!-- main menu -->
+      <section class="screen" id="screen-main">
+        <div class="title-wrap">
+          <h1 class="title">Dead <span>Ground</span></h1>
+          <div class="tagline">A survival tale in five days</div>
+        </div>
+        <div class="menu">
+          <button data-go="solo" class="big">Play Solo</button>
+          <button data-go="host">Host Co-op</button>
+          <button data-go="join">Join Co-op</button>
+          <button data-go="chars">Characters &amp; Upgrades</button>
+          <button data-go="settings">Settings</button>
+          <button data-go="howto">How to Play</button>
+          <button data-go="quit" class="ghost">Quit</button>
+        </div>
+        <div class="profile-strip"><span id="main-name"></span><span id="main-salvage"></span><span id="main-progress"></span></div>
+      </section>
+
+      <!-- lobby (solo + multiplayer) -->
+      <section class="screen" id="screen-lobby">
+        <header class="screen-head">
+          <button class="back" data-go="leave-lobby">← Back</button>
+          <h2 id="lobby-title">Play Solo</h2>
+          <div id="lobby-net"></div>
+        </header>
+        <div class="lobby-grid">
+          <div class="col">
+            <div class="tabs" id="mode-tabs">
+              <button data-mode="story" class="active">Story Campaign</button>
+              <button data-mode="endless">Endless Survival</button>
+            </div>
+            <div id="map-list" class="map-list"></div>
+          </div>
+          <div class="col wide">
+            <h3>Choose your survivor</h3>
+            <div id="char-pick" class="char-grid"></div>
+            <div id="map-detail" class="map-detail panel"></div>
+          </div>
+          <div class="col">
+            <h3>Survivors</h3>
+            <div id="lobby-players" class="lobby-players"></div>
+            <div id="lobby-hint" class="hint"></div>
+            <button id="lobby-start" class="big">Start</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- join -->
+      <section class="screen" id="screen-join">
+        <header class="screen-head"><button class="back" data-go="main">← Back</button><h2>Join Co-op</h2></header>
+        <div class="form panel">
+          <label>Your name <input id="join-name" maxlength="16" /></label>
+          <label>Host address (IP) <input id="join-addr" placeholder="192.168.1.20" /></label>
+          <label>Port <input id="join-port" type="number" /></label>
+          <button id="join-go" class="big">Connect</button>
+          <div id="join-status" class="hint"></div>
+          <p class="hint">
+            Ask the host for the address shown in their lobby. On the same Wi-Fi/LAN, use their local IP. Over the internet,
+            the host must forward TCP port 27015 on their router (or both of you can use a virtual LAN such as Tailscale, ZeroTier
+            or Radmin VPN and use that IP).
+          </p>
+        </div>
+      </section>
+
+      <!-- characters -->
+      <section class="screen" id="screen-chars">
+        <header class="screen-head">
+          <button class="back" data-go="main">← Back</button>
+          <h2>Characters &amp; Upgrades</h2>
+          <div class="salvage-pill" id="chars-salvage"></div>
+        </header>
+        <p class="hint center">Earn <b>Salvage</b> by killing zombies, surviving rounds and completing maps. Spend it to upgrade each survivor's ability.</p>
+        <div id="char-upgrades" class="upgrade-grid"></div>
+      </section>
+
+      <!-- settings -->
+      <section class="screen" id="screen-settings">
+        <header class="screen-head"><button class="back" data-go="main">← Back</button><h2>Settings</h2></header>
+        <div class="form panel">
+          <label>Player name <input id="set-name" maxlength="16" /></label>
+          <label>Master volume <input id="set-master" type="range" min="0" max="1" step="0.05" /></label>
+          <label>Effects volume <input id="set-sfx" type="range" min="0" max="1" step="0.05" /></label>
+          <label>Music volume <input id="set-music" type="range" min="0" max="1" step="0.05" /></label>
+          <label class="check"><input id="set-shake" type="checkbox" /> Screen shake</label>
+          <button id="set-fullscreen">Toggle Fullscreen (F11)</button>
+          <button id="set-reset" class="danger">Reset all progress</button>
+        </div>
+      </section>
+
+      <!-- how to play -->
+      <section class="screen" id="screen-howto">
+        <header class="screen-head"><button class="back" data-go="main">← Back</button><h2>How to Play</h2></header>
+        <div class="howto panel">
+          <div>
+            <h3>Controls</h3>
+            <table class="keys">
+              <tr><td>W A S D</td><td>Move</td></tr>
+              <tr><td>Mouse</td><td>Aim</td></tr>
+              <tr><td>Left click</td><td>Shoot (hold)</td></tr>
+              <tr><td>Shift</td><td>Sprint</td></tr>
+              <tr><td>R</td><td>Reload</td></tr>
+              <tr><td>Q / 1 / 2</td><td>Swap weapon</td></tr>
+              <tr><td>1 / 2 / 3</td><td>Pick a level-up card (when shown)</td></tr>
+              <tr><td>F / Right click</td><td>Character ability</td></tr>
+              <tr><td>G</td><td>Throw grenade (at cursor)</td></tr>
+              <tr><td>V</td><td>Knife</td></tr>
+              <tr><td>E</td><td>Interact / buy / hold to revive or activate</td></tr>
+              <tr><td>Tab</td><td>Scoreboard</td></tr>
+              <tr><td>Mouse wheel</td><td>Zoom</td></tr>
+              <tr><td>Esc</td><td>Pause / menu</td></tr>
+            </table>
+          </div>
+          <div>
+            <h3>Surviving</h3>
+            <ul>
+              <li>Zombies come in <b>rounds</b>. Each round has more, tougher zombies. Clear the round to get a short break.</li>
+              <li>Earn <b>points</b> for every hit and kill. Spend them on the <b>Mystery Box</b> (950), <b>ammo crates</b>, <b>perk machines</b>, clearing <b>debris</b>, and the <b>Weapon Forge</b> (5000) which upgrades your current gun.</li>
+              <li>Guns are found by <b>searching</b> weapon racks, lockers, crates, car trunks and fallen survivors (look for the <b>✦ sparkle</b>, hold <b>E</b>). Guns roll a rarity — <span style="color:#d9d4c7">Common</span>, <span style="color:#6fd36a">Uncommon</span>, <span style="color:#4fa8ff">Rare</span>, <span style="color:#bb6cff">Epic</span>, <span style="color:#ffa53a">Legendary</span> — with more damage, bigger magazines and faster reloads. Military chests always hold Rare or better. Searched containers sometimes restock between rounds.</li>
+              <li>Kills earn <b>XP</b>. Each level, pick one of three upgrades (1/2/3) — they stack for the rest of the run.</li>
+              <li>Zombies drop power-ups: Max Ammo, Insta-Kill, Double Points and Kaboom.</li>
+              <li>Follow the <b>objective</b> (top-left, yellow beacons and the minimap) to progress the story and escape. Every map has a boss.</li>
+              <li>In co-op, downed players can be revived by holding <b>E</b> next to them. Dead players respawn next round.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- end of game -->
+      <section class="screen" id="screen-end">
+        <div class="end-wrap panel">
+          <h1 id="end-title"></h1>
+          <p id="end-text"></p>
+          <div id="end-stats"></div>
+          <div id="end-reward" class="reward"></div>
+          <div class="end-buttons" id="end-buttons"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- overlays -->
+    <div class="overlay" id="overlay-pause">
+      <div class="panel pause-box">
+        <h2 id="pause-title">Paused</h2>
+        <button id="pause-resume" class="big">Resume</button>
+        <label>Master volume <input id="pause-master" type="range" min="0" max="1" step="0.05" /></label>
+        <button id="pause-quit" class="danger">Quit to Menu</button>
+      </div>
+    </div>
+    <div class="overlay" id="overlay-intro">
+      <div class="panel intro-box">
+        <div class="intro-sub" id="intro-sub"></div>
+        <h1 id="intro-title"></h1>
+        <p id="intro-text"></p>
+        <ol id="intro-steps"></ol>
+        <div class="intro-extra" id="intro-extra"></div>
+        <button id="intro-go" class="big">Begin</button>
+      </div>
+    </div>
+    <div class="overlay" id="overlay-error"><div class="panel"><h2>Something went wrong</h2><pre id="error-text"></pre><button id="error-close">Close</button></div></div>
+    <div id="toast"></div>
+
+    <script src="../dist/bundle.js"></script>
+  </body>
+</html>

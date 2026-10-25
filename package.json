@@ -1,0 +1,47 @@
+{
+  "name": "zombie-survival",
+  "productName": "Dead Ground",
+  "version": "1.0.0",
+  "description": "Top-down co-op zombie survival",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "start": "node build.js && node scripts/run.js",
+    "dev": "node build.js && node scripts/run.js --dev",
+    "test": "node build.js && node test/simtest.mjs",
+    "smoke": "node build.js && node scripts/run.js --smoke",
+    "dist": "node build.js && electron-builder --win portable nsis"
+  },
+  "build": {
+    "appId": "com.deadground.game",
+    "productName": "Dead Ground",
+    "files": [
+      "electron/**",
+      "dist/**",
+      "src/index.html",
+      "src/style.css",
+      "node_modules/ws/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "directories": {
+      "output": "release"
+    }
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@fontsource/fredoka": "^5.3.0",
+    "@fontsource/nunito": "^5.3.0",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2"
+  }
+}
