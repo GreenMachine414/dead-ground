@@ -18,10 +18,20 @@ function profilePath() {
   return path.join(app.getPath('userData'), 'profile.json');
 }
 
+// start in fullscreen if the player left it on last time
+function savedFullscreen() {
+  try {
+    return !!JSON.parse(fs.readFileSync(profilePath(), 'utf8')).settings.fullscreen;
+  } catch {
+    return false;
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1600,
     height: 900,
+    fullscreen: !isSmoke && savedFullscreen(),
     minWidth: 1024,
     minHeight: 600,
     backgroundColor: '#0b0c0e',
@@ -74,8 +84,11 @@ ipcMain.handle('net:ips', () => {
 
 ipcMain.handle('clip:write', (_e, text) => clipboard.writeText(String(text)));
 ipcMain.handle('app:quit', () => app.quit());
-ipcMain.handle('app:fullscreen', () => {
-  win.setFullScreen(!win.isFullScreen());
+// on = true/false sets it, undefined toggles; returns the new state
+ipcMain.handle('app:fullscreen', (_e, on) => {
+  const next = on === undefined ? !win.isFullScreen() : !!on;
+  win.setFullScreen(next);
+  return next;
 });
 ipcMain.handle('app:args', () => ({ smoke: isSmoke && !isPerf, perf: isPerf, vector: process.argv.includes('--vector'), dev: isDev }));
 

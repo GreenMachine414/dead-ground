@@ -39,7 +39,7 @@ class App {
     document.addEventListener('keydown', (e) => {
       if (e.code === 'F11') {
         e.preventDefault();
-        window.native && window.native.toggleFullscreen();
+        this.setFullscreen();
       }
     });
     $$('[data-go]').forEach((b) => b.addEventListener('click', () => this.go(b.dataset.go)));
@@ -145,7 +145,7 @@ class App {
     for (const k of ['master', 'sfx', 'music']) $('#set-' + k).addEventListener('input', (e) => this.setSetting(k, +e.target.value));
     $('#set-shake').addEventListener('change', (e) => this.setSetting('shake', e.target.checked));
     $('#set-graphics').addEventListener('change', (e) => this.setSetting('graphics', e.target.value));
-    $('#set-fullscreen').addEventListener('click', () => window.native && window.native.toggleFullscreen());
+    $('#set-fullscreen').addEventListener('change', (e) => this.setFullscreen(e.target.checked));
     $('#set-reset').addEventListener('click', () => {
       if (!confirm('Reset all progress, upgrades and salvage? This cannot be undone.')) return;
       const keep = this.profile.settings;
@@ -165,7 +165,16 @@ class App {
     $('#set-sfx').value = s.sfx;
     $('#set-music').value = s.music;
     $('#set-shake').checked = s.shake;
+    $('#set-fullscreen').checked = s.fullscreen;
     $('#set-graphics').value = s.graphics;
+  }
+
+  // on: true/false, or undefined to toggle (F11). Remembered for the next launch.
+  async setFullscreen(on) {
+    if (!window.native) return;
+    const state = await window.native.setFullscreen(on);
+    this.setSetting('fullscreen', state);
+    $('#set-fullscreen').checked = state;
   }
 
   setSetting(k, v) {

@@ -124,6 +124,26 @@ input[type='range'] {
   background: transparent;
   border: none;
 }
+/* scrollbars (small windows): a parchment thumb in a dark wood track */
+::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(36, 23, 15, 0.6);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, var(--parch), var(--parch2));
+  border: 3px solid var(--edge);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(90deg, #f8c870, var(--gold));
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
 .panel,
 .card {
   background: linear-gradient(var(--wood2), var(--wood));
@@ -310,7 +330,7 @@ input[type='range'] {
 }
 .char-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 10px;
 }
 .char-card {
@@ -507,7 +527,7 @@ select {
 }
 .upgrade-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 14px;
 }
 .upg {
@@ -1270,82 +1290,78 @@ select {
   font-size: 10px;
   margin-left: 1px;
 }
+/* level-up / upgrade machine picks: a compact strip above the XP bar */
 #hud .levelup {
   position: absolute;
-  bottom: 74px;
+  bottom: 62px;
   left: 50%;
   transform: translateX(-50%);
   display: none;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
+  opacity: 0.92;
 }
 #hud .levelup.show {
   display: flex;
-  animation: rise 0.35s ease-out;
+  animation: lu-in 0.2s ease-out;
 }
-@keyframes rise {
+@keyframes lu-in {
   from {
-    transform: translate(-50%, 30px);
     opacity: 0;
   }
 }
 .lu-title {
   font-family: var(--display);
-  font-weight: 700;
-  font-size: 26px;
+  font-size: 13px;
   color: var(--gold);
-  text-shadow: 0 4px 0 var(--edge);
+  text-shadow: 0 1px 2px #000;
 }
 .lu-title span {
-  font-size: 18px;
   color: var(--parch);
 }
 .lu-cards {
   display: flex;
-  gap: 14px;
+  gap: 8px;
   pointer-events: auto;
 }
 .lu-card {
   position: relative;
-  width: 190px;
-  padding: 16px 14px 12px;
-  background: linear-gradient(var(--parch), var(--parch2));
-  color: var(--ink);
-  text-shadow: none;
-  border: 3px solid var(--edge);
-  border-radius: 18px;
-  box-shadow: 0 6px 0 var(--edge);
-  text-align: center;
+  width: 150px;
+  padding: 5px 8px 5px 34px;
+  background: rgba(36, 23, 15, 0.82);
+  color: var(--parch);
+  border: 2px solid var(--c);
+  border-radius: 10px;
   cursor: pointer;
-  transition: transform 0.1s;
-}
-.lu-card:hover {
-  transform: translateY(-4px);
+  text-align: left;
 }
 .lu-key {
   position: absolute;
-  top: -12px;
-  left: -12px;
-  width: 30px;
-  height: 30px;
+  top: -7px;
+  left: -7px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: var(--wood);
   color: var(--gold);
-  border: 3px solid var(--edge);
+  border: 2px solid var(--edge);
   font-family: var(--display);
+  font-size: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .lu-icon {
-  width: 50px;
-  height: 50px;
-  margin: 0 auto 6px;
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--c);
-  border: 3px solid var(--edge);
-  font-size: 26px;
+  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1353,23 +1369,13 @@ select {
 }
 .lu-name {
   font-family: var(--display);
-  font-size: 19px;
+  font-size: 13px;
 }
 .lu-desc {
-  font-size: 13px;
-  font-weight: 700;
-  color: #5a4636;
-  min-height: 34px;
-}
-.lu-stack {
-  color: #b05a2a;
-  font-size: 12px;
-  letter-spacing: 2px;
-}
-.lu-hint {
-  font-weight: 800;
-  font-size: 13px;
-  color: var(--parch);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  opacity: 0.85;
 }
 #hud .weapon {
   position: absolute;

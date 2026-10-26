@@ -222,6 +222,15 @@ function drawHat(ctx, hat, hx, hy, u, facing) {
       ctx.fillRect(hx - u * 0.03, hy - u * 0.26, u * 0.06, u * 0.14);
       ctx.fillRect(hx - u * 0.07, hy - u * 0.22, u * 0.14, u * 0.06);
       break;
+    case 'beanie':
+      ctx.beginPath();
+      ctx.ellipse(hx, hy - u * 0.1, u * 0.32, u * 0.24, 0, Math.PI, 0);
+      fillStroke(ctx, '#3f6a5a', OUT, lw);
+      rr(ctx, hx - u * 0.33, hy - u * 0.14, u * 0.66, u * 0.1, u * 0.04);
+      fillStroke(ctx, '#2f5246', OUT, lw);
+      circle(ctx, hx, hy - u * 0.36, u * 0.07);
+      fillStroke(ctx, '#e8d8b0', OUT, lw);
+      break;
     case 'helmet':
       ctx.beginPath();
       ctx.ellipse(hx, hy - u * 0.06, u * 0.34, u * 0.26, 0, Math.PI, 0);
@@ -428,7 +437,7 @@ export function drawPerson(ctx, x, y, u0, o) {
 
 export function playerLook(charId) {
   const c = CHARACTERS[charId] || CHARACTERS.brick;
-  const hair = { brick: '#5a3a22', sparks: '#3a2a20', doc: '#1e1a1a', rook: '#3a3020', volt: '#ece6ff' }[charId];
+  const hair = { brick: '#5a3a22', sparks: '#3a2a20', doc: '#1e1a1a', rook: '#3a3020', volt: '#ece6ff', mags: '#c0502a' }[charId];
   return { skin: hex(c.skin), shirt: hex(c.color), pants: '#4a5266', hat: c.hat, hair };
 }
 

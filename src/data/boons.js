@@ -12,6 +12,10 @@ export const BOONS = {
   crit: { name: 'Deadeye', desc: '+8% chance to deal double damage', icon: '✦', color: '#ff7a59', max: 4 },
   grenadier: { name: 'Grenadier', desc: '+1 grenade capacity, +25% grenade damage', icon: '●', color: '#8fbf5a', max: 3 },
   mend: { name: 'Second Breath', desc: 'Health regenerates sooner and faster', icon: '✚', color: '#7be0a8', max: 2 },
+  aegis: { name: 'Aegis', desc: '+25 shield that recharges after 5s without damage', icon: '⛨', color: '#7ab8ff', max: 3 },
+  laststand: { name: 'Last Stand', desc: 'Get back up on your own the next time you go down', icon: '✝', color: '#ffd65a', max: 1 },
+  overcharge: { name: 'Overcharge', desc: '+15% ability damage, healing and duration', icon: 'ϟ', color: '#c58cff', max: 4 },
+  thorns: { name: 'Thorns', desc: 'Zombies that hit you take heavy damage', icon: '✶', color: '#9acd5a', max: 3 },
 };
 export const BOON_IDS = Object.keys(BOONS);
 

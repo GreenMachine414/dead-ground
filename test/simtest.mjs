@@ -40,9 +40,9 @@ function bot(game, p, god) {
 }
 
 function run(name, opts, seconds, god, expectWin) {
-  const chars = ['brick', 'sparks', 'doc', 'rook', 'volt'];
+  const chars = ['brick', 'sparks', 'doc', 'rook', 'volt', 'mags'];
   const players = [];
-  for (let i = 0; i < opts.players; i++) players.push({ id: i, name: 'Bot' + i, char: chars[(i + opts.charOffset) % 5], level: opts.level || 3 });
+  for (let i = 0; i < opts.players; i++) players.push({ id: i, name: 'Bot' + i, char: chars[(i + opts.charOffset) % chars.length], level: opts.level || 3 });
   const t0 = Date.now();
   let game;
   try {

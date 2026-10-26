@@ -1,6 +1,6 @@
 // Authoritative game simulation. Runs on the host (or in solo play) and produces
 // snapshots that the renderer / remote clients consume. No DOM or three.js here.
-import { WEAPONS, weaponStats, weaponsForMap, FORGE, RARITY, rollRarity } from '../data/weapons.js';
+import { WEAPONS, weaponStats, weaponsForMap, FORGE, FORGE2, RARITY, rollRarity } from '../data/weapons.js';
 import { ZOMBIES, POWERUPS, PERKS } from '../data/zombies.js';
 import { CHARACTERS } from '../data/characters.js';
 import { MAPS, getMap } from '../data/maps.js';
@@ -17,6 +17,14 @@ export const WIDS = Object.keys(WEAPONS);
 export const PLAYER_R = 0.4;
 export const BASE_SPEED = 5.4;
 const STATE_CODE = { alive: 0, down: 1, dead: 2 };
+const BLEED_TIME = 45; // seconds a downed player can wait for a revive
+// upgrade machine: price of the nth purchase (per player) is SHOP_COST + n * SHOP_STEP
+const SHOP_COST = 1500, SHOP_STEP = 1000;
+const NO_ARMOR = new Set(['explosive', 'gunblast', 'ability', 'chain']);
+// damage kinds that count as kills with the gun in hand (for the second forge level)
+const GUN_KILLS = new Set(['bullet', 'fire', 'burn', 'chain', 'gunblast']);
+// ability stats scaled by the Overcharge upgrade
+const OVERCHARGE_STATS = ['wallHp', 'spikes', 'damage', 'hp', 'duration', 'heal', 'zoneHeal', 'zoneDamage', 'restock', 'zone'];
 const ZSTATE = { rise: 0, move: 1, attack: 2, windup: 3, charge: 4, leap: 5, stun: 6, drain: 2 };
 const BOX_COST = 950;
 const MAX_GRENADES = 4;
@@ -153,6 +161,8 @@ export class Game {
       fireCd: 0,
       meleeCd: 0,
       abilityCd: 0,
+      shield: 0,
+      shopBuys: 0,
       charges: st.charges || 1,
       maxCharges: st.charges || 1,
       grenades: 2,
@@ -203,9 +213,9 @@ export class Game {
   // weapon stats for a specific player (rarity + forge + level-up bonuses)
   wstat(p, w) {
     const st = weaponStats(w.id, w.forged, w.rarity || 0);
-    const b = p.boons;
-    if (!b.bandolier) return st;
-    return { ...st, reserve: Math.round(st.reserve * (1 + 0.25 * b.bandolier)) };
+    const mult = (1 + 0.25 * (p.boons.bandolier || 0)) * (p.char === 'mags' ? 1.25 : 1);
+    if (mult === 1) return st;
+    return { ...st, reserve: Math.round(st.reserve * mult) };
   }
 
   maxGrenades(p) {
@@ -327,11 +337,14 @@ export class Game {
     this.updateAbilityCooldown(p, dt);
     const mend = p.boons.mend || 0;
     if (this.time - p.lastHurt > 3.5 - mend * 1.2 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 30 * (1 + 0.5 * mend) * dt);
+    const shieldMax = 25 * (p.boons.aegis || 0);
+    if (p.shield < shieldMax && this.time - p.lastHurt > 5) p.shield = Math.min(shieldMax, p.shield + 20 * dt);
     for (const w of p.weapons) if (w && w.forging > 0) {
       w.forging -= dt;
       if (w.forging <= 0) {
         w.forging = 0;
-        w.forged = true;
+        w.forged = (w.forged || 0) + 1;
+        w.fkills = 0;
         const st = this.wstat(p, w);
         w.mag = st.mag;
         w.reserve = st.reserve;
@@ -419,12 +432,25 @@ export class Game {
         const end = this.hitscan(p.id, ox, oz, dx, dz, ws.range, dmg, ws.pierce || 1, 'bullet');
         this.emit({ k: 't', x: ox, z: oz, x2: ox + dx * end, z2: oz + dz * end, w: wi, f: w.forged ? 1 : 0 });
       }
+    } else if (ws.type === 'projectile' && ws.lob) {
+      // arc the shell onto the cursor (clamped to range); it bursts where it lands
+      const tx = p.input.ax, tz = p.input.az;
+      let dx = tx - ox, dz = tz - oz;
+      const d = Math.hypot(dx, dz) || 1, dd = Math.max(2, Math.min(ws.range, d));
+      dx = (dx / d) * dd;
+      dz = (dz / d) * dd;
+      const T = 0.35 + dd * 0.025, g = 24;
+      this.projs.push({
+        id: this.nextId++, kind: ws.proj, owner: 'p', pid: p.id, x: ox, y: 1.1, z: oz,
+        vx: dx / T, vz: dz / T, vy: (0.5 * g * T * T - 1.1) / T, g, land: true,
+        dmg, splash: ws.splash, life: T + 0.3, r: 0.25, forged: w.forged,
+      });
     } else if (ws.type === 'projectile') {
       const a = p.ang + (this.rng() - 0.5) * 2 * ws.spread;
       this.projs.push({
         id: this.nextId++, kind: ws.proj, owner: 'p', pid: p.id, x: ox, y: 1.1, z: oz,
         vx: Math.cos(a) * ws.projSpeed, vy: 0, vz: Math.sin(a) * ws.projSpeed, g: 0,
-        dmg, splash: ws.splash, life: ws.range / ws.projSpeed, r: 0.25, forged: w.forged,
+        dmg, splash: ws.splash, life: ws.range / ws.projSpeed, r: 0.25, forged: w.forged, pierce: ws.pierce || 1,
       });
     } else if (ws.type === 'flame') {
       const range = ws.range;
@@ -441,7 +467,7 @@ export class Game {
         z.burnBy = p.id;
       }
     } else if (ws.type === 'chain') {
-      this.chainLightning(p.id, ox, oz, p.ang, dmg, ws.chain, 0.5, ws.range);
+      this.chainLightning(p.id, ox, oz, p.ang, dmg, ws.chain, 0.5, ws.range, 'chain');
     }
   }
 
@@ -468,7 +494,7 @@ export class Game {
     return end;
   }
 
-  chainLightning(pid, ox, oz, ang, dmg, chains, stun, range) {
+  chainLightning(pid, ox, oz, ang, dmg, chains, stun, range, kind = 'ability') {
     let best = null, bestD = Infinity;
     for (const z of this.zombies) {
       if (z.state === 'rise' && z.t > 0.8) continue;
@@ -496,7 +522,7 @@ export class Game {
       pts.push(cur.x, cur.z);
       cur.stun = Math.max(cur.stun || 0, stun);
       const cx = cur.x, cz = cur.z;
-      this.damageZombie(cur, d, pid, 'ability');
+      this.damageZombie(cur, d, pid, kind);
       d *= 0.85;
       let next = null, nd = 8 * 8;
       for (const z of this.zombies) {
@@ -527,7 +553,7 @@ export class Game {
     } else {
       for (const zb of [...this.zombies]) {
         const d = Math.hypot(zb.x - x, zb.z - z);
-        if (d < radius + zb.r) this.damageZombie(zb, dmg * (1 - (0.5 * d) / (radius + zb.r)), src.pid, 'explosive');
+        if (d < radius + zb.r) this.damageZombie(zb, dmg * (1 - (0.5 * d) / (radius + zb.r)), src.pid, src.kind || 'explosive');
       }
     }
   }
@@ -541,7 +567,7 @@ export class Game {
       dmg *= 2;
       crit = true;
     }
-    if (z.def.armor && kind !== 'explosive' && kind !== 'ability') dmg *= 1 - z.def.armor;
+    if (z.def.armor && !NO_ARMOR.has(kind)) dmg *= 1 - z.def.armor;
     if (z.rally > 0) dmg *= 0.6;
     if (this.instakill > 0 && !z.boss && !z.mini) dmg = Math.max(dmg, z.hp + 1);
     z.hp -= dmg;
@@ -566,6 +592,8 @@ export class Game {
     this.totalKills++;
     if (p) {
       p.kills++;
+      const cw = this.curWeapon(p);
+      if (cw.forged === 1 && !cw.forging && GUN_KILLS.has(kind)) cw.fkills = (cw.fkills || 0) + 1;
       this.givePoints(p, kind === 'melee' ? 130 : z.def.points);
       if (p.boons.vamp && p.state === 'alive') p.hp = Math.min(p.maxHp, p.hp + 3 * p.boons.vamp);
     }
@@ -645,6 +673,7 @@ export class Game {
     const ch = CHARACTERS[p.char];
     const st = { ...ch.stats(p.lvl) };
     if (p.boons.focus) st.cooldown *= 1 - 0.08 * p.boons.focus;
+    if (p.boons.overcharge) for (const k of OVERCHARGE_STATS) if (st[k]) st[k] *= 1 + 0.15 * p.boons.overcharge;
     const scale = 1 + 0.1 * Math.max(0, this.wave - 1);
     const ax = p.input.ax, az = p.input.az;
     if (p.char === 'brick') {
@@ -662,6 +691,7 @@ export class Game {
     let ok = true;
     if (p.char === 'sparks') ok = this.placeTurret(p, st, scale);
     else if (p.char === 'doc') this.healField(p, st);
+    else if (p.char === 'mags') this.supplyDrop(p, st);
     else if (p.char === 'rook') this.airstrike(p, st, scale, ax, az);
     else if (p.char === 'volt') {
       this.chainLightning(p.id, p.x, p.z, p.ang, st.damage * scale, st.chains, st.stun, 16);
@@ -778,6 +808,28 @@ export class Game {
     }
     this.hazards.push({ id: this.nextId++, kind: 'heal', x: p.x, z: p.z, r: 4, t: st.zone, heal: st.zoneHeal, dmg: st.zoneDamage, pid: p.id });
     this.emit({ k: 'heal', x: p.x, z: p.z, r: st.radius });
+  }
+
+  // Mags: restock allies in range now; higher levels leave a zone that keeps refilling
+  supplyDrop(p, st) {
+    for (const q of this.players) {
+      if (q.state !== 'alive' || Math.hypot(q.x - p.x, q.z - p.z) > st.radius) continue;
+      this.restock(q, Math.min(1, st.restock), st.mags);
+      if (st.grenades) q.grenades = Math.min(this.maxGrenades(q), q.grenades + st.grenades);
+      this.emit({ k: 'float', x: q.x, z: q.z, s: '+Ammo', p: q.id });
+    }
+    if (st.zone) this.hazards.push({ id: this.nextId++, kind: 'supply', x: p.x, z: p.z, r: 4, t: st.zone, tick: 0.5 });
+    this.emit({ k: 'heal', x: p.x, z: p.z, r: st.radius, c: '#ffd65a' });
+  }
+
+  // add `frac` of each weapon's max reserve (and optionally top up magazines)
+  restock(q, frac, mags) {
+    for (const w of q.weapons) {
+      if (!w) continue;
+      const ws = this.wstat(q, w);
+      w.reserve = Math.min(ws.reserve, w.reserve + Math.ceil(ws.reserve * frac));
+      if (mags) w.mag = ws.mag;
+    }
   }
 
   airstrike(p, st, scale, ax, az) {
@@ -979,15 +1031,34 @@ export class Game {
     // forge
     const fs = this.world.spots.forge;
     if (fs && near(fs.x, fs.z, 2.3)) {
-      if (cw.forged) return { text: 'Weapon already forged' };
       if (cw.forging) return { text: 'Forging...' };
+      if (cw.forged >= 2) return { text: 'Weapon fully forged' };
+      if (cw.forged && (cw.fkills || 0) < FORGE2.kills) return { text: `Forge XX unlocks after ${FORGE2.kills} kills with this gun (${cw.fkills || 0}/${FORGE2.kills})` };
+      const cost = cw.forged ? FORGE2.cost : FORGE.cost;
       return {
-        cost: FORGE.cost,
-        text: '[E] Weapon Forge: upgrade ' + WEAPONS[cw.id].name + ' — ' + FORGE.cost,
+        cost,
+        text: `[E] Weapon Forge: upgrade ${WEAPONS[cw.id].name} to ${cw.forged ? 'XX' : 'X'} — ${cost}`,
         act: () => {
           cw.forging = 2.5;
           p.reloadT = 0;
           this.emit({ k: 'sfx', s: 'forgestart', x: fs.x, z: fs.z });
+        },
+      };
+    }
+    // upgrade machine: buy a pick of 3 random level-up upgrades
+    const shop = this.world.spots.boonshop;
+    if (shop && near(shop.x, shop.z, 2.1)) {
+      if (p.choices.length) return { text: 'Pick your upgrade first (1 / 2 / 3)' };
+      const cost = SHOP_COST + SHOP_STEP * p.shopBuys;
+      return {
+        cost,
+        text: '[E] Upgrade Machine: choose 1 of 3 upgrades — ' + cost,
+        act: () => {
+          const set = this.rollChoices(p);
+          if (!set.length) return;
+          p.shopBuys++;
+          p.choices.push(set);
+          this.emit({ k: 'sfx', s: 'perk', x: shop.x, z: shop.z });
         },
       };
     }
@@ -1098,6 +1169,11 @@ export class Game {
 
   hurtPlayer(p, dmg) {
     if (p.state !== 'alive' || p.invuln > 0) return;
+    if (p.shield > 0) {
+      const absorbed = Math.min(p.shield, dmg);
+      p.shield -= absorbed;
+      dmg -= absorbed;
+    }
     p.hp -= dmg;
     p.lastHurt = this.time;
     this.emit({ k: 'hurt', p: p.id, x: p.x, z: p.z });
@@ -1108,9 +1184,16 @@ export class Game {
       p.maxHp = p.baseMaxHp;
       p.reloadT = 0;
       const others = this.players.some((q) => q !== p && q.state === 'alive');
-      if (this.players.length > 1 && others) {
+      if (p.boons.laststand) {
+        // consumed: the upgrade can be picked again later
+        delete p.boons.laststand;
+        p.selfRevive = true;
         p.state = 'down';
-        p.bleed = 30;
+        p.bleed = 3;
+        this.emit({ k: 'msg', s: 'LAST STAND', sub: p.name + ' is getting back up!' });
+      } else if (this.players.length > 1 && others) {
+        p.state = 'down';
+        p.bleed = BLEED_TIME;
         p.revive = 0;
         this.emit({ k: 'msg', s: p.name + ' is down!', sub: 'Hold E near them to revive' });
       } else if (this.players.length === 1 && !p.secondWindUsed) {
@@ -1122,7 +1205,7 @@ export class Game {
         this.emit({ k: 'msg', s: 'SECOND WIND', sub: 'Getting back up... this only happens once!' });
       } else {
         p.state = this.players.length > 1 ? 'down' : 'dead';
-        p.bleed = 30;
+        p.bleed = BLEED_TIME;
       }
       this.emit({ k: 'sfx', s: 'down', x: p.x, z: p.z });
     }
@@ -1470,21 +1553,27 @@ export class Game {
       if ((z.boss || z.mini) && this.bossThink(z, tgt, dist, dt)) continue;
       if (this.specialThink(z, tgt, dist, dt)) continue;
 
-      // melee attack
+      // melee attack: regular zombies start the swing a little early and lunge
+      // through it, so players can't dodge every hit just by walking
       const reach = z.r + tgt.r + 0.45;
+      const big = z.boss || z.mini;
       z.atkCd -= dt;
       if (z.state === 'attack') {
         z.t -= dt;
+        if (!big && dist > reach * 0.6) moveCircle(this.world, this.sgrid, z, (dx / dist) * z.speed * 1.4 * dt, (dz / dist) * z.speed * 1.4 * dt, z.cr);
         if (z.t <= 0) {
           z.state = 'move';
-          if (dist < reach + 0.5) this.hurtPlayer(tgt, z.damage);
+          if (dist < reach + (big ? 0.5 : 0.8)) {
+            this.hurtPlayer(tgt, z.damage);
+            if (tgt.boons.thorns) this.damageZombie(z, 60 * tgt.boons.thorns * (1 + 0.15 * (this.wave - 1)), tgt.id, 'spikes');
+          }
           z.atkCd = z.def.attackRate;
         }
         continue;
       }
-      if (dist < reach && z.atkCd <= 0) {
+      if (dist < reach + (big ? 0 : 0.4) && z.atkCd <= 0) {
         z.state = 'attack';
-        z.t = 0.35;
+        z.t = big ? 0.35 : 0.3;
         z.ang = Math.atan2(dz, dx);
         continue;
       }
@@ -1987,19 +2076,26 @@ export class Game {
         }
       } else {
         if (hitWall || pr.life <= 0 || (pr.land && pr.y <= 0)) {
-          if (pr.splash) this.explode(hitWall ? pr.x : nx, hitWall ? pr.z : nz, pr.splash, pr.dmg, pr.owner === 'z' ? { enemy: true } : { pid: pr.pid });
+          if (pr.splash) this.explode(hitWall ? pr.x : nx, hitWall ? pr.z : nz, pr.splash, pr.dmg, pr.owner === 'z' ? { enemy: true } : { pid: pr.pid, kind: 'gunblast' });
           else if (pr.kind === 'spit') this.acidPuddle(pr.x, pr.z);
           done = true;
         } else {
           pr.x = nx;
           pr.z = nz;
-          if (pr.owner === 'p') {
+          if (pr.owner === 'p' && !(pr.land && pr.y > 1)) {
             for (const z of this.zombies) {
-              if (z.state === 'rise' && z.t > 0.8) continue;
+              if (z.id === pr.lastHit || (z.state === 'rise' && z.t > 0.8)) continue;
               if (dist2(z.x, z.z, pr.x, pr.z) < (z.r + pr.r) * (z.r + pr.r)) {
-                if (pr.splash) this.explode(pr.x, pr.z, pr.splash, pr.dmg, { pid: pr.pid });
-                else this.damageZombie(z, pr.dmg, pr.pid, 'bullet');
-                done = true;
+                if (pr.splash) {
+                  this.explode(pr.x, pr.z, pr.splash, pr.dmg, { pid: pr.pid, kind: 'gunblast' });
+                  done = true;
+                } else {
+                  this.damageZombie(z, pr.dmg, pr.pid, 'bullet');
+                  if (pr.kind === 'ray') this.emit({ k: 'rayhit', x: pr.x, z: pr.z, f: pr.forged ? 1 : 0 });
+                  pr.lastHit = z.id;
+                  pr.dmg *= 0.85;
+                  done = --pr.pierce <= 0;
+                }
                 break;
               }
             }
@@ -2054,6 +2150,13 @@ export class Game {
       } else if (h.kind === 'heal') {
         for (const p of this.players) if (p.state === 'alive' && dist2(p.x, p.z, h.x, h.z) < h.r * h.r) p.hp = Math.min(p.maxHp, p.hp + h.heal * dt);
         if (h.dmg) for (const z of [...this.zombies]) if (dist2(z.x, z.z, h.x, h.z) < h.r * h.r) this.damageZombie(z, h.dmg * dt, h.pid, 'zone');
+      } else if (h.kind === 'supply') {
+        // refills in half-second steps so reserve counts stay whole numbers
+        h.tick -= dt;
+        if (h.tick <= 0) {
+          h.tick = 0.5;
+          for (const p of this.players) if (p.state === 'alive' && dist2(p.x, p.z, h.x, h.z) < h.r * h.r) this.restock(p, 0.05, false);
+        }
       } else if (h.kind === 'napalm') {
         for (const z of [...this.zombies]) if (dist2(z.x, z.z, h.x, h.z) < h.r * h.r) this.damageZombie(z, h.dps * dt, h.pid, 'zone');
       } else if (h.kind === 'ring') {
@@ -2234,12 +2337,12 @@ export class Game {
       left: this.toSpawn + this.zombies.filter((z) => !z.boss && !z.mini).length,
       P: this.players.map((p) => ({
         id: p.id, n: p.name, c: p.char, l: p.lvl, x: r2(p.x), z: r2(p.z), a: r2(p.ang), hp: Math.ceil(p.hp), mh: p.maxHp,
-        s: STATE_CODE[p.state], w: p.weapons.map((w) => (w ? [w.id, w.forged ? 1 : 0, w.mag, w.reserve, w.forging > 0 ? 1 : 0, w.rarity || 0, this.wstat(p, w).mag] : null)), cw: p.cur,
+        s: STATE_CODE[p.state], w: p.weapons.map((w) => (w ? [w.id, w.forged || 0, w.mag, w.reserve, w.forging > 0 ? 1 : 0, w.rarity || 0, this.wstat(p, w).mag, w.fkills || 0] : null)), cw: p.cur,
         xp: p.xp, xpn: xpForLevel(p.rank), rk: p.rank, chs: p.choices[0] || null, nch: p.choices.length, bo: p.boons,
         pts: p.points, k: p.kills, cd: r2(p.abilityCd), cdm: p.abilityMax || 1, ch: p.charges, chm: p.maxCharges, g: p.grenades,
         pk: Object.keys(p.perks), rl: p.reloadT > 0 ? r2(1 - p.reloadT / p.reloadMax) : -1, pr: p.prompt, pp: r2(p.promptProg),
         bl: r2(p.bleed), rv: r2(p.revive), st: r2(p.stamina), iv: p.invuln > 0 ? 1 : 0, mv: p.moving ? 1 : 0, sp: p.sprinting ? 1 : 0,
-        tp: p.tp, er: p.earned, dn: p.downs, rvs: p.revives,
+        tp: p.tp, er: p.earned, dn: p.downs, rvs: p.revives, sh: Math.ceil(p.shield),
       })),
       Z: this.zombies.map((z) => [
         z.id, ZTYPES.indexOf(z.type), r2(z.x), r2(z.z), r2(z.ang), r2(z.hp / z.maxHp),

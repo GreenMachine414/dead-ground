@@ -122,6 +122,29 @@ export const CHARACTERS = {
       };
     },
   },
+  mags: {
+    name: 'Mags', role: 'Quartermaster', color: 0xb8862e, skin: 0xa87050, hat: 'beanie',
+    ability: 'Supply Drop',
+    desc: 'Tosses an ammo crate that restocks every ally nearby.',
+    passive: '+25% max reserve ammo',
+    levels: [
+      'Restock 40% reserve ammo, radius 5',
+      'Restock 60%, leaves a supply zone that keeps refilling',
+      '+1 grenade for everyone in range',
+      'Restock 80%, radius 6.5, faster cooldown',
+      'Full restock + full magazines, longer zone',
+    ],
+    stats(lvl) {
+      return {
+        restock: [0.4, 0.6, 0.6, 0.8, 1][lvl - 1],
+        radius: [5, 5, 5.5, 6.5, 7][lvl - 1],
+        zone: [0, 6, 7, 8, 10][lvl - 1],
+        grenades: lvl >= 3 ? 1 : 0,
+        mags: lvl >= 5,
+        cooldown: [30, 28, 27, 24, 22][lvl - 1],
+      };
+    },
+  },
 };
 
 export const CHARACTER_IDS = Object.keys(CHARACTERS);

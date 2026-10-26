@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld('native', {
   localIPs: () => ipcRenderer.invoke('net:ips'),
   copyText: (text) => ipcRenderer.invoke('clip:write', text),
   quit: () => ipcRenderer.invoke('app:quit'),
-  toggleFullscreen: () => ipcRenderer.invoke('app:fullscreen'),
+  setFullscreen: (on) => ipcRenderer.invoke('app:fullscreen', on),
   args: () => ipcRenderer.invoke('app:args'),
   smokeShot: (name) => ipcRenderer.invoke('smoke:shot', name),
   smokeDone: (report) => ipcRenderer.invoke('smoke:done', report),

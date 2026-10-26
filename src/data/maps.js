@@ -152,7 +152,7 @@ export const MAPS = [
       c.spot('box', 44, 64);
       c.spot('box', 22, 50);
       c.spot('box', 70, 40);
-      c.spot('forge', 52, 84);
+      c.spot('boonshop', 52, 84);
       c.forestBorder(4, 0.55);
       c.scatter(60, (x, z) => c.tree(x, z, 0.8 + rng() * 0.6));
       c.scatter(40, (x, z) => c.bush(x, z));
@@ -318,7 +318,7 @@ export const MAPS = [
       c.spot('perk', 90, 60, { perk: 'rapid' });
       c.spot('box', 60, 62);
       c.spot('box', 90, 40);
-      c.spot('forge', 60, 100);
+      c.spot('boonshop', 60, 100);
       c.scatter(24, (x, z) => (rng() < 0.5 ? c.barrel(x, z) : c.crate(x, z)));
     },
   },
@@ -405,6 +405,7 @@ export const MAPS = [
       c.spot('charge', 52, 90);
       c.solid(62, 88, 4, 2, { kind: 'console', h: 1 });
       c.spot('forge', 66, 92);
+      c.spot('boonshop', 60, 92);
       c.loot('chest', 50, 94, 'n');
       c.loot('rack', 67, 83, 's');
       // tent camp with campfires
@@ -553,6 +554,7 @@ export const MAPS = [
       c.spot('box', 26, 70);
       c.spot('box', 96, 32);
       c.spot('forge', 72, 58);
+      c.spot('boonshop', 66, 58);
       c.forestBorder(5, 0.6);
       c.scatter(5, (x, z) => c.loot('crate', x, z, 's'), [8, 8, 104, 104]);
       c.scatter(120, (x, z) => c.tree(x, z, 0.8 + rng() * 0.6));
@@ -660,6 +662,7 @@ export const MAPS = [
       c.spot('box', 30, 90);
       c.spot('box', 90, 30);
       c.spot('forge', 74, 116);
+      c.spot('boonshop', 68, 116);
     },
   },
 ];

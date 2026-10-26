@@ -1,5 +1,5 @@
 // DOM heads-up display (cozy RPG style).
-import { WEAPONS, weaponStats, RARITY } from './data/weapons.js';
+import { WEAPONS, weaponStats, RARITY, FORGE2 } from './data/weapons.js';
 import { CHARACTERS } from './data/characters.js';
 import { PERKS, POWERUPS } from './data/zombies.js';
 import { BOONS } from './data/boons.js';
@@ -20,7 +20,7 @@ export class Hud {
       <div class="msg"><div class="msg-main"></div><div class="msg-sub"></div></div>
       <div class="notes"></div>
       <div class="prompt"><div class="prompt-text"></div><div class="prompt-bar"><div></div></div></div>
-      <div class="levelup"><div class="lu-title">LEVEL UP! <span class="lu-more"></span></div><div class="lu-cards"></div><div class="lu-hint">Press 1, 2 or 3 — or click a card</div></div>
+      <div class="levelup"><div class="lu-title">Upgrade: press 1, 2 or 3 <span class="lu-more"></span></div><div class="lu-cards"></div></div>
       <div class="player card">
         <div class="pts-row"><span class="coin">●</span><span class="pts"></span><span class="pts-pop"></span></div>
         <div class="bar hp"><div class="fill"></div><span></span></div>
@@ -232,7 +232,7 @@ export class Hud {
     const hpf = Math.max(0, me.hp / me.mh);
     el.hpFill.style.width = hpf * 100 + '%';
     el.hpFill.classList.toggle('low', hpf < 0.35);
-    this.set('hpt', el.hpText, `${Math.max(0, me.hp)} / ${me.mh}`);
+    this.set('hpt', el.hpText, `${Math.max(0, me.hp)} / ${me.mh}${me.sh > 0 ? ' +' + me.sh + ' ⛨' : ''}`);
     el.stam.style.width = me.st * 100 + '%';
     const ch = CHARACTERS[me.c];
     this.set('abn', el.abName, `${ch.ability} · Lv ${me.l}`);
@@ -248,11 +248,11 @@ export class Hud {
     const w = me.w[me.cw] || me.w[0];
     if (w) {
       const r = RARITY[w[5] || 0];
-      const ws = weaponStats(w[0], !!w[1], w[5] || 0);
+      const ws = weaponStats(w[0], w[1], w[5] || 0);
       this.set('wicon', el.wIcon, gunIconURL(w[0], !!w[1]), 'src');
       this.set('wr', el.wRarity, (w[1] ? 'Forged · ' : '') + r.name);
       el.wRarity.style.color = w[1] ? '#d6a8ff' : r.color;
-      this.set('wn', el.wName, ws.name + (w[4] ? ' (forging...)' : ''));
+      this.set('wn', el.wName, ws.name + (w[4] ? ' (forging...)' : w[1] === 1 ? ` · XX ${Math.min(w[7], FORGE2.kills)}/${FORGE2.kills}` : ''));
       this.set('mag', el.mag, String(w[2]));
       this.set('res', el.res, ' / ' + w[3]);
       el.mag.classList.toggle('empty', w[2] === 0);
@@ -275,7 +275,7 @@ export class Hud {
       const cards = me.chs.map((id, i) => {
         const b = BOONS[id];
         const have = (me.bo && me.bo[id]) || 0;
-        return `<div class="lu-card" data-pick="${i + 1}" style="--c:${b.color}"><div class="lu-key">${i + 1}</div><div class="lu-icon">${b.icon}</div><div class="lu-name">${b.name}</div><div class="lu-desc">${b.desc}</div><div class="lu-stack">${'●'.repeat(have)}${'○'.repeat(b.max - have)}</div></div>`;
+        return `<div class="lu-card" data-pick="${i + 1}" style="--c:${b.color}"><div class="lu-key">${i + 1}</div><div class="lu-icon">${b.icon}</div><div class="lu-name">${b.name}${b.max > 1 ? ` ${have + 1}/${b.max}` : ''}</div><div class="lu-desc">${b.desc}</div></div>`;
       }).join('');
       this.set('lucards', el.luCards, cards, 'innerHTML');
     }
@@ -354,6 +354,9 @@ export class Hud {
     g.restore();
     const marks = snap.O.mk.slice();
     if (snap.O.zone) marks.push([snap.O.zone[0], snap.O.zone[1], 3]);
+    // downed teammates: flashing, and pinned to the edge when off the map view
+    for (const p of snap.P) if (p.s === 1 && p.id !== me.id) marks.push([p.x, p.z, 4]);
+    const blink = Math.floor(performance.now() / 250) % 2 === 0;
     for (const m of marks) {
       let [px, pz] = toMap(m[0], m[1]);
       const dx = px - size / 2, dz = pz - size / 2;
@@ -364,7 +367,7 @@ export class Hud {
         px = size / 2 + (dx / d) * maxR;
         pz = size / 2 + (dz / d) * maxR;
       }
-      g.fillStyle = m[2] === 2 ? '#ff4a3a' : m[2] === 3 ? '#6ac8ff' : '#ffd65a';
+      g.fillStyle = m[2] === 4 ? (blink ? '#ff2a1a' : '#ffffff') : m[2] === 2 ? '#ff4a3a' : m[2] === 3 ? '#6ac8ff' : '#ffd65a';
       g.strokeStyle = '#2a1e1a';
       g.lineWidth = 2;
       g.beginPath();
@@ -373,6 +376,17 @@ export class Hud {
         g.moveTo(px + Math.cos(a) * 8, pz + Math.sin(a) * 8);
         g.lineTo(px + Math.cos(a + 2.4) * 7, pz + Math.sin(a + 2.4) * 7);
         g.lineTo(px + Math.cos(a - 2.4) * 7, pz + Math.sin(a - 2.4) * 7);
+      } else if (m[2] === 4) {
+        // pulsing ring with a cross
+        g.arc(px, pz, blink ? 10 : 7, 0, Math.PI * 2);
+        g.lineWidth = 3;
+        g.strokeStyle = '#ff2a1a';
+        g.stroke();
+        g.beginPath();
+        g.rect(px - 1.5, pz - 5, 3, 10);
+        g.rect(px - 5, pz - 1.5, 10, 3);
+        g.strokeStyle = '#2a1e1a';
+        g.lineWidth = 2;
       } else {
         for (let i = 0; i < 10; i++) {
           const r = i % 2 ? 3 : 7;

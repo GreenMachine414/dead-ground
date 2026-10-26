@@ -37,6 +37,8 @@ export function measureRefresh() {
   requestAnimationFrame(tick);
 }
 const OUT = 'rgba(40,30,30,0.85)';
+// the upgrade machine is drawn like a perk machine (price is per player, so no cost label)
+const SHOP = { name: 'Upgrade Machine', color: 0xa070f0 };
 // floating callouts over a boss when it winds up a signature move
 const BOSS_SHOUTS = {
   sweep: 'SCYTHE!', hook: 'HOOK!', bile: 'BILE!', devour: 'FEAST!', barrage: 'ARTILLERY!', rally: 'RALLY!',
@@ -189,6 +191,7 @@ export class Renderer {
     const sp = world.spots;
     for (const s of sp.perk) this.statics.push({ k: 'perk', x: s.x, z: s.z - 0.7, perk: s.perk });
     if (sp.forge) this.statics.push({ k: 'forge', x: sp.forge.x, z: sp.forge.z - 0.8 });
+    if (sp.boonshop) this.statics.push({ k: 'perk', x: sp.boonshop.x, z: sp.boonshop.z - 0.7, shop: true });
     const stationNames = new Set();
     for (const st of map.story.steps) if (st.type === 'activate') st.spots.forEach((n) => stationNames.add(n));
     for (const n of stationNames) {
@@ -622,8 +625,8 @@ export class Renderer {
         c.stroke();
         continue;
       }
-      const col = { acid: '#7ee04a', fire: '#ff7a2a', heal: '#5ef0a0', napalm: '#ff6a2a' }[kind] || '#ffffff';
-      if (kind === 'heal') {
+      const col = { acid: '#7ee04a', fire: '#ff7a2a', heal: '#5ef0a0', napalm: '#ff6a2a', supply: '#ffd65a' }[kind] || '#ffffff';
+      if (kind === 'heal' || kind === 'supply') {
         S.circle(c, X, Y, R);
         c.fillStyle = S.rgba(col, 0.15 * fade);
         c.fill();
@@ -633,7 +636,7 @@ export class Renderer {
         c.lineWidth = u * 0.1;
         c.stroke();
         c.setLineDash([]);
-        if (Math.random() < 0.3) this.emit(x + (Math.random() - 0.5) * r * 1.6, z + (Math.random() - 0.5) * r * 1.6, 0, 0, 0, 1.2, '#7fffb0', 0.8, 0.1, { glow: true });
+        if (Math.random() < 0.3) this.emit(x + (Math.random() - 0.5) * r * 1.6, z + (Math.random() - 0.5) * r * 1.6, 0, 0, 0, 1.2, col, 0.8, 0.1, { glow: true });
       } else {
         S.blob(c, X, Y, R, x + z, 0.15, 8);
         c.fillStyle = S.rgba(col, (0.35 + Math.sin(this.time * 6 + x) * 0.08) * fade);
@@ -702,6 +705,13 @@ export class Renderer {
       c.strokeStyle = p.p.s === 1 ? 'rgba(255,80,60,0.9)' : p.p.id === view.localId ? 'rgba(120,255,150,0.75)' : 'rgba(110,180,255,0.75)';
       c.lineWidth = u * 0.07;
       c.stroke();
+      if (p.p.sh > 0) {
+        // Aegis shield
+        S.ellipse(c, this.sx(p.x), this.sy(p.z) - u * 0.6, u * 0.62, u * 0.75);
+        c.strokeStyle = 'rgba(122,184,255,0.55)';
+        c.lineWidth = u * 0.05;
+        c.stroke();
+      }
     }
   }
 
@@ -1097,7 +1107,7 @@ export class Renderer {
     const X = this.sx(o.x), Y = this.sy(o.z);
     switch (o.k) {
       case 'perk': {
-        const pk = PERKS[o.perk];
+        const pk = o.shop ? SHOP : PERKS[o.perk];
         const col = S.hex(pk.color);
         S.shadow(c, X, Y + u * 0.3, u * 0.6, u * 0.2);
         S.rr(c, X - u * 0.5, Y - u * 1.4, u * 1.0, u * 1.75, u * 0.25);
@@ -1114,7 +1124,7 @@ export class Renderer {
         c.fillStyle = 'rgba(0,0,0,0.4)';
         c.fill();
         this.glowAt(o.x, o.z, 2.5, col, 0.25);
-        this.label(o.x, o.z, 2.8, `${pk.name} · ${pk.cost}`, col, 4);
+        this.label(o.x, o.z, 2.8, o.shop ? pk.name : `${pk.name} · ${pk.cost}`, col, 4);
         return;
       }
       case 'forge': {
@@ -1125,7 +1135,7 @@ export class Renderer {
         c.fill();
         this.glowAt(o.x, o.z, 3, '#ff8a3a', 0.35);
         if (Math.random() < 0.2) this.emit(o.x + (Math.random() - 0.5), o.z, 0.8, 0, 0, 1.5, '#ffb050', 0.8, 0.06, { glow: true });
-        this.label(o.x, o.z, 2.2, 'Weapon Forge · 5000', '#ffaa60', 4);
+        this.label(o.x, o.z, 2.2, 'Weapon Forge', '#ffaa60', 4);
         return;
       }
       case 'station': {
@@ -1973,10 +1983,13 @@ export class Renderer {
         }
         break;
       }
-      case 'heal':
-        this.rings.push({ x: e.x, z: e.z, r0: 0.4, r1: e.r, col: '#6ff0a0', life: 0.6, max: 0.6, flat: true });
-        this.burst(e.x, e.z, 0.3, 30, ['#7fffb0', '#c8ffe0'], 3, 1, 0.12, { up: 1.5, drag: 2, glow: true });
+      case 'heal': {
+        // Doc's heal, or Mags' supply drop when a colour is given
+        const col = e.c || '#6ff0a0';
+        this.rings.push({ x: e.x, z: e.z, r0: 0.4, r1: e.r, col, life: 0.6, max: 0.6, flat: true });
+        this.burst(e.x, e.z, 0.3, 30, [col, '#fff8e0'], 3, 1, 0.12, { up: 1.5, drag: 2, glow: true });
         break;
+      }
       case 'strike':
         this.rings.push({ x: e.x, z: e.z, r0: e.r, r1: e.r, col: '#ff4a3a', life: 1.6, max: 1.6, flat: true, w: 0.08 });
         for (let i = 0; i < 25; i++) this.emit(e.x + (Math.random() - 0.5), e.z + (Math.random() - 0.5), 0.2, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.6, 2 + Math.random() * 2, '#ff5a4a', 1.5, 0.25, { grow: 2, drag: 0.5 });
@@ -2047,6 +2060,14 @@ export class Renderer {
           this.emit(e.x + Math.cos(a) * 1.3, e.z + Math.sin(a) * 1.3, 0.8, 0, 0, 0, '#ffffff', 0.15, 0.1);
         }
         break;
+      case 'rayhit': {
+        // plasma splash: a quick bright ring and sparks, no explosion
+        const col = e.f ? '#ff6aff' : '#6aff8a';
+        this.rings.push({ x: e.x, z: e.z, r0: 1.1, r1: 0.15, col, life: 0.25, max: 0.25, w: 0.1 });
+        this.burst(e.x, e.z, 1, 6, [col, '#e8ffe8'], 5, 0.25, 0.07, { drag: 6, glow: true });
+        this.flashes.push({ x: e.x, z: e.z, r: 1.8, col, a: 0.6, life: 0.12, max: 0.12 });
+        break;
+      }
       case 'hitwall':
         this.burst(e.x, e.z, 0.6, 5, ['#a87a4a', '#7a5230'], 3, 0.5, 0.08, { g: 10 });
         break;
@@ -2066,9 +2087,10 @@ export class Renderer {
         this.text(e.x, e.z, 1.4, e.s, '#c8ffb0', 0.42, 1.3);
         break;
       case 'levelup':
-        this.rings.push({ x: e.x, z: e.z, r0: 0.4, r1: 2.5, col: '#ffd65a', life: 0.8, max: 0.8, flat: true, w: 0.18 });
-        this.burst(e.x, e.z, 0.5, 40, ['#ffd65a', '#fff2b0', '#ffb030'], 4, 1.2, 0.12, { up: 1.6, drag: 1, glow: true });
-        this.text(e.x, e.z, 2.8, 'LEVEL ' + e.r + '!', '#ffd65a', 0.7, 1.8);
+        // kept small so it doesn't hide the fight
+        this.rings.push({ x: e.x, z: e.z, r0: 0.4, r1: 1.4, col: '#ffd65a', life: 0.5, max: 0.5, flat: true, w: 0.08 });
+        this.burst(e.x, e.z, 0.5, 10, ['#ffd65a', '#fff2b0'], 2, 0.6, 0.07, { up: 1.6, drag: 1, glow: true });
+        this.text(e.x, e.z, 2.6, 'Level ' + e.r, '#ffd65a', 0.42, 1.1);
         break;
       case 'boon':
         this.text(e.x, e.z, 2.5, BOONS[e.b].icon + ' ' + BOONS[e.b].name, BOONS[e.b].color, 0.5, 1.6);

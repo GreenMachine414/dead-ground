@@ -32,17 +32,18 @@ Save data (progress, upgrades, settings) lives in `%APPDATA%\zombie-survival\pro
   5. Ground Zero: reactors, antidote vials, defend the lab, Juggernaut. Boss: Patient Zero (splits into look-alike decoys, life-drain beam, enrages)
 - **Endless Survival** on any unlocked map. A boss appears every 5 rounds and a mini-boss every 3 rounds after round 6.
 - **13 weapons**, introduced across the maps: pistol, revolver, shotgun, SMG, AR, grenade launcher, crossbow, sniper, flamethrower, LMG, Plasma Ray, Storm Caller (chain lightning) and minigun.
-- **5 characters**, each with an ability you can upgrade to level 5 using Salvage earned in games:
+- **6 characters**, each with an ability you can upgrade to level 5 using Salvage earned in games:
   - Brick: walls
   - Sparks: sentry turrets
   - Doc: healing field and revives
   - Rook: airstrike
   - Volt: chain lightning
+  - Mags: supply drop that restocks allies' ammo (passive: +25% reserve ammo)
 - **Loot:** guns aren't lying around. You find them by searching weapon racks, lockers, supply crates, car trunks, fallen survivors and toolboxes (hold E at the ✦ sparkle). Each gun rolls a rarity from Common to Legendary, which raises damage, magazine size and reload speed. Military chests always roll Rare or better, and searched containers sometimes restock between rounds.
-- **In-match levels:** kills earn XP. Each level offers 3 upgrade cards (1/2/3 or click), and picks stack for the rest of the run. Solo play pauses while you choose.
-- **COD-style systems:** rounds, points, Mystery Box, 4 perk machines, debris doors, a Weapon Forge (pack-a-punch) and power-ups (Max Ammo, Insta-Kill, Double Points, Kaboom). Zombies claw up out of the ground when they spawn.
+- **In-match levels:** kills earn XP. Each level offers 3 upgrades (1/2/3 or click), and picks stack for the rest of the run. Solo play pauses while you choose. Upgrades include Aegis (recharging shield), Last Stand (self-revive), Overcharge (stronger ability) and Thorns. Every map also has an **Upgrade Machine** that sells a pick of 3 for points (the price rises with each purchase).
+- **COD-style systems:** rounds, points, Mystery Box, 4 perk machines, debris doors, a Weapon Forge on maps 3–5 (pack-a-punch; a second "XX" level unlocks after 100 kills with the forged gun) and power-ups (Max Ammo, Insta-Kill, Double Points, Kaboom). Zombies claw up out of the ground when they spawn.
 - **Music:** a procedural melodic score with its own key, tempo and melody for each map. It stays calm while you explore, adds bass and drums during rounds, and builds further for bosses.
-- **Co-op for up to 4 players.** Zombie count and health scale with the number of players. Downed players can be revived. Solo players get one automatic "Second Wind" per game.
+- **Co-op for up to 4 players.** Zombie count and health scale with the number of players. Downed players can be revived within 45 seconds. Solo players get one automatic "Second Wind" per game.
 
 ## Co-op
 
@@ -58,6 +59,8 @@ To test on one PC, run `npm start` twice and join with the code from the second 
 ## Graphics and performance
 
 Settings → **Graphics** offers **Auto** (default), **High** and **Low**. Auto watches the frame rate and lowers render resolution and particle counts when the game can't keep up with the display, then raises them again when there's headroom. Low is the fastest option for weak laptops.
+
+Settings → **Fullscreen** (or F11) switches to fullscreen and is remembered for the next launch.
 
 ## Controls
 

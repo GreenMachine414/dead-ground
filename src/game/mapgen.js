@@ -14,7 +14,7 @@ export function createWorld(mapDef) {
     decor: [],
     lights: [],
     doors: [],
-    spots: { playerSpawn: [], box: [], perk: [], forge: null, zspawn: [], named: {}, loot: [] },
+    spots: { playerSpawn: [], box: [], perk: [], forge: null, boonshop: null, zspawn: [], named: {}, loot: [] },
     theme: mapDef.theme,
   };
   const rng = mulberry32(mapDef.id * 7919 + 13);
@@ -137,7 +137,7 @@ function makeCtx(world, rng) {
     },
     spot(type, x, z, extra) {
       const s = { x, z, ...extra };
-      if (type === 'forge') world.spots.forge = s;
+      if (type === 'forge' || type === 'boonshop') world.spots[type] = s;
       else if (world.spots[type]) world.spots[type].push(s);
       else (world.spots.named[type] = world.spots.named[type] || []).push(s);
       ctx.reserve(Math.floor(x) - 1, Math.floor(z) - 1, 3, 3);
@@ -247,6 +247,7 @@ function finalizeSpots(world, rng) {
   const { spots } = world;
   [spots.playerSpawn, spots.box, spots.perk, spots.loot].forEach((list) => list.forEach(fix));
   fix(spots.forge);
+  fix(spots.boonshop);
   Object.values(spots.named).forEach((list) => list.forEach(fix));
 
   // Zombie spawn points: evenly spread free cells (they claw out of the ground anywhere)

@@ -49,8 +49,15 @@ export async function runSmoke(app) {
     app.show('chars');
     await wait(200);
     await shot('02-upgrades');
+    // fullscreen setting round trip (smoke runs never save the profile)
+    await app.setFullscreen(true);
+    await wait(500);
+    check('fullscreen-on', app.profile.settings.fullscreen === true && window.innerHeight >= screen.height - 2);
+    await app.setFullscreen(false);
+    await wait(500);
+    check('fullscreen-off', app.profile.settings.fullscreen === false);
 
-    const chars = ['brick', 'sparks', 'doc', 'rook', 'volt'];
+    const chars = ['brick', 'sparks', 'mags', 'rook', 'volt'];
     for (const m of MAPS) {
       app.openLobby('solo');
       app.lobby.unlocked = 5;
@@ -81,6 +88,15 @@ export async function runSmoke(app) {
       report.fps[m.id] = Math.round((frames / (performance.now() - t0)) * 1000);
       await shot(`map${m.id}`);
       check(`map${m.id}-zombies-spawned`, g.totalKills + g.zombies.length > 0);
+      if (m.id === 2) {
+        // the upgrade machine and its prompt
+        const shop = g.world.spots.boonshop;
+        p.x = shop.x;
+        p.z = shop.z + 0.5;
+        await wait(400);
+        await shot('map2-upgrade-machine');
+        check('upgrade-machine-prompt', /Upgrade Machine/.test(p.prompt));
+      }
       if (m.id === 1) {
         // level-up cards
         autoPick = false;
@@ -186,6 +202,8 @@ export async function runSmoke(app) {
       check('code-guest-left', !g.players.some((q) => q.name === 'CodeBot'));
     }
     report.checks.snapBytes = snaps.length ? JSON.stringify(snaps[snaps.length - 1]).length : 0;
+    g.hurtPlayer(remote, 9999); // downed teammate shows on the minimap
+    await wait(300);
     await shot('06-host-game');
     app.quitToMenu();
     await wait(300);

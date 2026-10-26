@@ -29,7 +29,7 @@ export const WEAPONS = {
   },
   gl: {
     name: 'Thumper GL', map: 2, type: 'projectile', damage: 260, splash: 3.6, rate: 1.4, auto: false,
-    mag: 4, reserve: 28, reload: 2.6, spread: 0.01, range: 30, projSpeed: 22, proj: 'grenade',
+    mag: 4, reserve: 28, reload: 2.6, spread: 0.01, range: 22, projSpeed: 22, proj: 'grenade', lob: true,
     ammoCost: 1000, color: 0xff9040, sound: 'thump', len: 0.8, gunColor: 0x4a5a3a, boxWeight: 8,
   },
   sniper: {
@@ -48,7 +48,7 @@ export const WEAPONS = {
     ammoCost: 1300, color: 0xffd080, sound: 'rifle', len: 1.15, gunColor: 0x2e3328, boxWeight: 7,
   },
   raygun: {
-    name: 'Plasma Ray', map: 4, type: 'projectile', damage: 420, splash: 2.2, rate: 3.2, auto: false,
+    name: 'Plasma Ray', map: 4, type: 'projectile', damage: 420, pierce: 3, rate: 3.2, auto: false,
     mag: 20, reserve: 160, reload: 2.2, spread: 0.01, range: 40, projSpeed: 40, proj: 'ray',
     ammoCost: 1500, color: 0x40ff60, sound: 'ray', len: 0.6, gunColor: 0xc0c8d0, boxWeight: 4,
   },
@@ -71,6 +71,8 @@ export const WEAPONS = {
 
 // Pack-a-Punch style upgrade ("Weapon Forge")
 export const FORGE = { cost: 5000, damageMult: 2.2, magMult: 1.5, reserveMult: 1.5 };
+// Second forge level ("XX"): unlocked by getting `kills` kills with a forged gun; stacks on FORGE.
+export const FORGE2 = { cost: 10000, kills: 100, damageMult: 1.6, magMult: 1.25, reserveMult: 1.25 };
 
 export function weaponsForMap(mapId) {
   return Object.keys(WEAPONS).filter((k) => WEAPONS[k].map <= mapId);
@@ -95,13 +97,14 @@ export function weaponStats(id, forged, rarity = 0) {
   const w = WEAPONS[id];
   if (!forged && !rarity) return w;
   const r = RARITY[rarity] || RARITY[0];
-  const f = forged ? FORGE : { damageMult: 1, magMult: 1, reserveMult: 1 };
+  // forged is the forge level: 0, 1 (X) or 2 (XX)
+  const k = (key) => (forged ? FORGE[key] : 1) * (forged >= 2 ? FORGE2[key] : 1);
   return {
     ...w,
-    name: w.name + (forged ? ' X' : ''),
-    damage: w.damage * f.damageMult * r.dmg,
-    mag: Math.round(w.mag * f.magMult * r.mag),
-    reserve: Math.round(w.reserve * f.reserveMult * r.mag),
+    name: w.name + (forged >= 2 ? ' XX' : forged ? ' X' : ''),
+    damage: w.damage * k('damageMult') * r.dmg,
+    mag: Math.round(w.mag * k('magMult') * r.mag),
+    reserve: Math.round(w.reserve * k('reserveMult') * r.mag),
     reload: w.reload * r.reload,
     ammoCost: w.ammoCost * (forged ? 2 : 1),
   };
