@@ -444,12 +444,35 @@ const ZLOOK = {
   crawler: { crawler: true },
 };
 export function zombieLook(type) {
-  const d = ZOMBIES[type];
-  const eye = d.boss ? '#ff3a2a' : type === 'spitter' ? '#9dff4a' : type === 'phantom' ? '#e6a8ff' : '#ffe46a';
+  // decoys (def.look) borrow another zombie's appearance
+  const own = ZOMBIES[type];
+  const lt = own.look || type;
+  const d = ZOMBIES[lt];
+  const eye = d.boss ? '#ff3a2a' : lt === 'spitter' ? '#9dff4a' : lt === 'phantom' ? '#e6a8ff' : '#ffe46a';
   return {
-    skin: hex(d.color), shirt: hex(d.shirt), pants: '#3c3a40', zombie: true, scale: d.scale,
-    eyes: eye, eyeGlow: eye, ...(ZLOOK[type] || {}),
+    skin: hex(d.color), shirt: hex(d.shirt), pants: '#3c3a40', zombie: true, scale: own.scale,
+    eyes: eye, eyeGlow: eye, ...(ZLOOK[lt] || {}),
   };
+}
+
+// Hive Queen egg sac: pulses faster as it gets closer to hatching
+export function drawEgg(ctx, x, y, u, t, seed, hurt) {
+  const pulse = 1 + Math.sin(t * 6 + seed) * 0.05;
+  shadow(ctx, x, y, u * 0.5, u * 0.18, 0.25);
+  blob(ctx, x, y - u * 0.45, u * 0.42 * pulse, seed, 0.1, 9);
+  fillStroke(ctx, hurt ? '#ffffff' : '#bcdcea', OUT, u * 0.05);
+  ctx.strokeStyle = 'rgba(70,120,160,0.6)';
+  ctx.lineWidth = u * 0.04;
+  ctx.beginPath();
+  for (let i = 0; i < 3; i++) {
+    const a = seed + i * 2.1;
+    ctx.moveTo(x + Math.cos(a) * u * 0.1, y - u * 0.5);
+    ctx.quadraticCurveTo(x + Math.cos(a) * u * 0.3, y - u * 0.75, x + Math.cos(a + 0.4) * u * 0.32, y - u * 0.35);
+  }
+  ctx.stroke();
+  circle(ctx, x - u * 0.12, y - u * 0.62, u * 0.08);
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fill();
 }
 
 // boss extras drawn on top of the base body
@@ -624,17 +647,20 @@ export function drawSparkle(ctx, x, y, u, t, color = '#fff6c0') {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(t * 0.8);
-  ctx.beginPath();
-  for (let i = 0; i < 8; i++) {
-    const r = i % 2 ? s * 0.35 : s;
-    const a = (i / 8) * Math.PI * 2;
-    ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-  }
-  ctx.closePath();
   ctx.fillStyle = color;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = u * 0.3;
-  ctx.fill();
+  // soft halo drawn as a larger faint star (shadowBlur is very slow on canvas)
+  for (const [k, a] of [[1.8, 0.3], [1, 1]]) {
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const r = (i % 2 ? s * 0.35 : s) * k;
+      const ang = (i / 8) * Math.PI * 2;
+      ctx.lineTo(Math.cos(ang) * r, Math.sin(ang) * r);
+    }
+    ctx.closePath();
+    ctx.globalAlpha *= a;
+    ctx.fill();
+    ctx.globalAlpha /= a;
+  }
   ctx.restore();
 }
 

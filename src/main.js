@@ -4,10 +4,12 @@ import { WEAPONS } from './data/weapons.js';
 import { ZOMBIES } from './data/zombies.js';
 import { loadProfile, saveProfile, upgradeCost, defaultProfile } from './profile.js';
 import { Audio } from './audio.js';
-import { Net, DEFAULT_PORT, PROTOCOL } from './net.js';
+import { Net, DEFAULT_PORT, PROTOCOL, normalizeCode } from './net.js';
 import { Session } from './session.js';
+import { measureRefresh } from './render/renderer.js';
 import { esc } from './hud.js';
 import { runSmoke } from './smoke.js';
+import { runPerf } from './perf.js';
 import { MenuBackdrop } from './menubg.js';
 
 const $ = (s) => document.querySelector(s);
@@ -31,6 +33,7 @@ class App {
       this.audio.resume();
       if (!this.session) this.audio.startMusic('menu');
     });
+    measureRefresh();
     this.backdrop = new MenuBackdrop(document.getElementById('menu-bg'));
     this.backdrop.start();
     document.addEventListener('keydown', (e) => {
@@ -43,6 +46,9 @@ class App {
     $$('#mode-tabs button').forEach((b) => b.addEventListener('click', () => this.setMode(b.dataset.mode)));
     $('#lobby-start').addEventListener('click', () => this.lobbyStart());
     $('#join-go').addEventListener('click', () => this.joinGame());
+    $('#join-ip-go').addEventListener('click', () => this.joinGame(true));
+    $('#join-code').addEventListener('input', (e) => (e.target.value = normalizeCode(e.target.value)));
+    $('#join-code').addEventListener('keydown', (e) => e.key === 'Enter' && this.joinGame());
     $('#pause-resume').addEventListener('click', () => this.togglePause(false));
     $('#pause-quit').addEventListener('click', () => this.quitToMenu());
     $('#pause-master').addEventListener('input', (e) => this.setSetting('master', +e.target.value));
@@ -52,6 +58,7 @@ class App {
     this.show('main');
     const args = window.native ? await window.native.args() : {};
     if (args.smoke) runSmoke(this);
+    if (args.perf) runPerf(this, { vector: args.vector });
   }
 
   // ---------------------------------------------------------------- navigation
@@ -83,10 +90,12 @@ class App {
         break;
       case 'join':
         $('#join-name').value = this.profile.name;
+        $('#join-code').value = '';
         $('#join-addr').value = this.profile.settings.lastJoin || '';
         $('#join-port').value = this.profile.settings.port || DEFAULT_PORT;
         $('#join-status').textContent = '';
         this.show('join');
+        $('#join-code').focus();
         break;
       case 'leave-lobby':
         this.leaveLobby();
@@ -135,6 +144,7 @@ class App {
     });
     for (const k of ['master', 'sfx', 'music']) $('#set-' + k).addEventListener('input', (e) => this.setSetting(k, +e.target.value));
     $('#set-shake').addEventListener('change', (e) => this.setSetting('shake', e.target.checked));
+    $('#set-graphics').addEventListener('change', (e) => this.setSetting('graphics', e.target.value));
     $('#set-fullscreen').addEventListener('click', () => window.native && window.native.toggleFullscreen());
     $('#set-reset').addEventListener('click', () => {
       if (!confirm('Reset all progress, upgrades and salvage? This cannot be undone.')) return;
@@ -155,12 +165,14 @@ class App {
     $('#set-sfx').value = s.sfx;
     $('#set-music').value = s.music;
     $('#set-shake').checked = s.shake;
+    $('#set-graphics').value = s.graphics;
   }
 
   setSetting(k, v) {
     this.profile.settings[k] = v;
     this.audio.setVolumes(this.profile.settings);
     if (k === 'shake' && this.session) this.session.renderer.shakeEnabled = v;
+    if (k === 'graphics' && this.session) this.session.renderer.setGraphics(v);
     clearTimeout(this.saveT);
     this.saveT = setTimeout(() => this.save(), 400);
   }
@@ -211,32 +223,50 @@ class App {
   }
 
   async hostLobby() {
+    if (this.hosting) return;
+    this.hosting = true;
     const port = this.profile.settings.port || DEFAULT_PORT;
     this.net = new Net();
+    this.net.handler = (m) => this.onHostMsg(m);
+    this.toast('Starting game...');
+    let res;
     try {
-      await this.net.host(port, this.profile.name);
+      res = await this.net.host(port, this.profile.name);
     } catch (e) {
       this.net = null;
       this.toast('Could not host: ' + e.message);
       return;
+    } finally {
+      this.hosting = false;
     }
-    this.net.handler = (m) => this.onHostMsg(m);
     const ips = window.native ? await window.native.localIPs() : [];
-    this.openLobby('host', { port, ips });
+    this.openLobby('host', { code: res.code, codeErr: res.codeErr, port: res.port, ips });
   }
 
-  async joinGame() {
+  copyCode() {
+    const code = this.lobby && this.lobby.code;
+    if (!code) return;
+    (window.native ? window.native.copyText(code) : navigator.clipboard.writeText(code)).then(() => this.toast('Code copied: ' + code));
+  }
+
+  // byIP: direct connection to the host's LAN relay instead of the game code
+  async joinGame(byIP = false) {
+    if (this.joining) return;
     const name = $('#join-name').value.trim().slice(0, 16) || 'Survivor';
+    const code = normalizeCode($('#join-code').value);
     const addr = $('#join-addr').value.trim();
     const port = +$('#join-port').value || DEFAULT_PORT;
-    if (!addr) return ($('#join-status').textContent = 'Enter the host address.');
+    if (byIP && !addr) return ($('#join-status').textContent = 'Enter the host address.');
+    if (!byIP && code.length !== 6) return ($('#join-status').textContent = 'Enter the 6-character game code from the host.');
     this.profile.name = name;
-    this.profile.settings.lastJoin = addr;
+    if (byIP) this.profile.settings.lastJoin = addr;
     this.save();
     $('#join-status').textContent = 'Connecting...';
+    this.joining = true;
     this.net = new Net();
+    const hello = { name, char: this.profile.char, level: this.profile.levels[this.profile.char], v: PROTOCOL };
     try {
-      const myId = await this.net.join(addr, port, { name, char: this.profile.char, level: this.profile.levels[this.profile.char], v: PROTOCOL });
+      const myId = byIP ? await this.net.join(addr, port, hello) : await this.net.joinCode(code, hello);
       this.myId = myId;
       this.net.handler = (m) => this.onClientMsg(m);
       this.net.onClose = () => this.onDisconnected('Connection to host lost.');
@@ -246,7 +276,9 @@ class App {
       this.renderLobby();
     } catch (e) {
       this.net = null;
-      $('#join-status').textContent = e.message + '. Check the address/port and that the host is in the lobby.';
+      $('#join-status').textContent = byIP ? e.message + '. Check the address/port and that the host is in the lobby.' : e.message + '.';
+    } finally {
+      this.joining = false;
     }
   }
 
@@ -261,6 +293,7 @@ class App {
 
   onDisconnected(reason) {
     if (this.session) this.endSession();
+    if (this.net) this.net.close();
     this.net = null;
     this.lobby = null;
     $('#overlay-pause').classList.remove('show');
@@ -358,7 +391,12 @@ class App {
         <div class="lp-char">${CHARACTERS[p.char].name} · ${CHARACTERS[p.char].ability} Lv ${p.level}</div></div></div>`).join('');
     const net = $('#lobby-net');
     if (L.kind === 'host') {
-      net.innerHTML = `Friends join at: <b>${(L.ips || []).join('</b> or <b>') || 'your IP'}</b> port <b>${L.port}</b><br>(internet play: forward TCP ${L.port} and share your public IP)`;
+      const lan = L.port ? `<div class="lan">Same network, no internet: join by IP <b>${(L.ips || []).join('</b> / <b>') || 'your IP'}</b> port ${L.port}</div>` : '';
+      net.innerHTML = L.code
+        ? `Game code <span class="code">${L.code}</span><button id="copy-code">Copy</button><div class="lan">Friends click <b>Join Co-op</b> and enter this code</div>${lan}`
+        : `<div>Online code unavailable: ${esc(L.codeErr || 'no internet')}</div>${lan}`;
+      const cb = $('#copy-code');
+      if (cb) cb.addEventListener('click', () => this.copyCode());
     } else net.innerHTML = '';
     const start = $('#lobby-start');
     start.style.display = isClient ? 'none' : '';

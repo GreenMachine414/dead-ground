@@ -55,31 +55,47 @@ export const ZOMBIES = {
     abilities: ['volley', 'slam', 'charge'],
   },
 
+  // ---- boss spawns ----
+  egg: {
+    name: 'Hive Egg', hp: 140, speed: 0, damage: 0, attackRate: 1, radius: 0.55,
+    color: 0xb8d8e8, shirt: 0x6a8aa8, points: 40, scale: 1, egg: { hatch: 5, type: 'leaper', count: 2 },
+  },
+  pzclone: {
+    name: 'Mirror Image', hp: 260, speed: 3.2, damage: 20, attackRate: 1.0, radius: 1.1,
+    color: 0xc04040, shirt: 0x200808, points: 50, scale: 2.8, clone: { life: 11 }, look: 'patientzero',
+  },
+
   // ---- bosses ----
+  // Each boss has signature abilities nobody else uses (see bossThink in sim.js):
+  //   Harvester: sweep (wide scythe arc), hook (drags a player in)
+  //   Abomination: bile (acid trail), devour (eats its own minions to heal)
+  //   Iron General: barrage (artillery on every player), rally (buffs nearby zombies)
+  //   Hive Queen: eggs (destroy them before they hatch)
+  //   Patient Zero: mirror (blinks and splits into decoys), drain (life-steal beam)
   harvester: {
     name: 'The Harvester', hp: 7500, speed: 2.4, damage: 50, attackRate: 1.6, radius: 1.2,
     color: 0x8a7a5a, shirt: 0x4a3018, points: 2000, scale: 2.5, boss: true, fixedHp: true,
-    abilities: ['charge', 'slam', 'summon'], summon: { type: 'runner', count: 4 },
+    abilities: ['sweep', 'hook', 'charge', 'summon'], summon: { type: 'runner', count: 4 },
   },
   abomination: {
     name: 'The Abomination', hp: 12000, speed: 2.2, damage: 55, attackRate: 1.8, radius: 1.4,
     color: 0xa08070, shirt: 0x6a3030, points: 2500, scale: 2.9, boss: true, fixedHp: true,
-    abilities: ['throw', 'slam', 'summon', 'charge'], summon: { type: 'bloater', count: 3 },
+    abilities: ['devour', 'bile', 'throw', 'slam', 'summon'], summon: { type: 'bloater', count: 3 },
   },
   general: {
     name: 'Iron General', hp: 17000, speed: 2.3, damage: 60, attackRate: 1.6, radius: 1.3,
     color: 0x5a6a4a, shirt: 0x3a4a2a, points: 3000, scale: 2.7, boss: true, fixedHp: true, armor: 0.25,
-    abilities: ['volley', 'charge', 'slam', 'summon'], summon: { type: 'armored', count: 4 },
+    abilities: ['barrage', 'rally', 'volley', 'charge', 'summon'], summon: { type: 'armored', count: 4 },
   },
   hivequeen: {
     name: 'The Hive Queen', hp: 22000, speed: 2.6, damage: 55, attackRate: 1.4, radius: 1.5,
     color: 0x8ab0c8, shirt: 0x2a4a6a, points: 3500, scale: 3.0, boss: true, fixedHp: true,
-    abilities: ['summon', 'volley', 'leap', 'slam'], summon: { type: 'leaper', count: 5 },
+    abilities: ['eggs', 'volley', 'leap', 'slam'],
   },
   patientzero: {
     name: 'Patient Zero', hp: 32000, speed: 2.9, damage: 65, attackRate: 1.3, radius: 1.3,
     color: 0xc04040, shirt: 0x200808, points: 5000, scale: 2.8, boss: true, fixedHp: true,
-    abilities: ['teleport', 'shockwave', 'summon', 'volley', 'slam'], summon: { type: 'phantom', count: 4 },
+    abilities: ['mirror', 'drain', 'teleport', 'shockwave', 'volley'], summon: { type: 'phantom', count: 4 },
     enrage: 0.5,
   },
 };

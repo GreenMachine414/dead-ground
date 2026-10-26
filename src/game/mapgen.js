@@ -14,7 +14,7 @@ export function createWorld(mapDef) {
     decor: [],
     lights: [],
     doors: [],
-    spots: { playerSpawn: [], box: [], ammo: [], perk: [], forge: null, zspawn: [], named: {}, loot: [] },
+    spots: { playerSpawn: [], box: [], perk: [], forge: null, zspawn: [], named: {}, loot: [] },
     theme: mapDef.theme,
   };
   const rng = mulberry32(mapDef.id * 7919 + 13);
@@ -245,7 +245,7 @@ function finalizeSpots(world, rng) {
     s.z = p.z;
   };
   const { spots } = world;
-  [spots.playerSpawn, spots.box, spots.ammo, spots.perk, spots.loot].forEach((list) => list.forEach(fix));
+  [spots.playerSpawn, spots.box, spots.perk, spots.loot].forEach((list) => list.forEach(fix));
   fix(spots.forge);
   Object.values(spots.named).forEach((list) => list.forEach(fix));
 

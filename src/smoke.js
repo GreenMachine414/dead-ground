@@ -2,6 +2,7 @@
 // Plays every map briefly with a bot, takes screenshots, and exercises networking.
 import { Game } from './game/sim.js';
 import { MAPS } from './data/maps.js';
+import { Net, PROTOCOL } from './net.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -105,9 +106,12 @@ export async function runSmoke(app) {
         check('container-searched', !cont.full);
         s.input.sample = () => botInput(g, 0, performance.now() / 1000);
         // spawn the boss right next to us for a screenshot, then force a win to see the end screen
-        const b = g.spawnZombie('harvester', p.x + 6, p.z - 4, false);
-        await wait(1500);
+        const b = g.spawnZombie('harvester', p.x + 3.5, p.z - 1, false);
+        // force its signature scythe sweep so the screenshot shows the telegraph
+        b.cds = { sweep: 0, hook: 99, charge: 99, summon: 99 };
+        await wait(450);
         await shot('map1-boss');
+        check('boss-sweep', b.pending === 'sweep');
         g.result = 'win';
         g.emit({ k: 'end', r: 'win' });
         await wait(3600);
@@ -135,6 +139,23 @@ export async function runSmoke(app) {
     ws.send(JSON.stringify({ d: { t: 'char', char: 'volt', level: 3 } }));
     await wait(300);
     check('char-change', app.lobby.players[1] && app.lobby.players[1].char === 'volt');
+    // a second guest joins with the game code over WebRTC (needs internet for signaling)
+    const guestMsgs = [];
+    let guest = null;
+    if (app.lobby.code) {
+      guest = new Net();
+      try {
+        await guest.joinCode(app.lobby.code, { name: 'CodeBot', char: 'rook', level: 1, v: PROTOCOL });
+        guest.handler = (m) => guestMsgs.push(m);
+        await wait(600);
+        check('code-join', app.lobby.players.some((q) => q.name === 'CodeBot'));
+        check('code-lobby-broadcast', guestMsgs.some((m) => m.t === 'h' && m.d.t === 'lobby' && m.d.players.length === 3));
+      } catch (e) {
+        check('code-join', false);
+        report.errors.push('code join: ' + e.message);
+        guest = null;
+      }
+    } else report.checks.codeSkipped = app.lobby.codeErr || 'no code';
     await shot('05-host-lobby');
     app.lobby.mapId = 2;
     app.lobbyStart();
@@ -156,7 +177,14 @@ export async function runSmoke(app) {
     const snaps = msgs.filter((m) => m.t === 'h' && m.d.t === 'snap');
     check('snapshots-received', snaps.length > 40);
     check('remote-moved', Math.abs(remote.x - (startX + 4)) < 0.2);
-    check('snapshot-has-2-players', snaps.length && snaps[snaps.length - 1].d.s.P.length === 2);
+    check('snapshot-has-all-players', snaps.length && snaps[snaps.length - 1].d.s.P.length === (guest ? 3 : 2));
+    if (guest) {
+      check('code-guest-started', guestMsgs.some((m) => m.t === 'h' && m.d.t === 'start'));
+      check('code-guest-snapshots', guestMsgs.filter((m) => m.t === 'h' && m.d.t === 'snap').length > 40);
+      guest.close();
+      await wait(800);
+      check('code-guest-left', !g.players.some((q) => q.name === 'CodeBot'));
+    }
     report.checks.snapBytes = snaps.length ? JSON.stringify(snaps[snaps.length - 1]).length : 0;
     await shot('06-host-game');
     app.quitToMenu();

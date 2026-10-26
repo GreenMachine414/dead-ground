@@ -30,6 +30,8 @@ export class Session {
     this.clientEvents = [];
     this.snap = null;
     this.groanT = 2;
+    this.localFireCd = 0; // client: predicted gunfire, so our own shots sound instantly
+    this.localFireT = -1;
     this.stats = { maxWave: 0 };
   }
 
@@ -50,6 +52,7 @@ export class Session {
     }
     this.renderer = new Renderer(container);
     this.renderer.shakeEnabled = this.app.profile.settings.shake;
+    this.renderer.setGraphics(this.app.profile.settings.graphics);
     this.renderer.loadWorld(this.world, this.map);
     const hudRoot = document.getElementById('hud');
     hudRoot.style.display = 'block';
@@ -193,6 +196,7 @@ export class Session {
         this.pred.perks = Object.fromEntries(me.pk.map((k) => [k, true]));
         if (me.s === 0) {
           const w = me.w[me.cw] || me.w[0];
+          this.predictFire(inp, me, w, dt, now);
           stepMovement(this.world, this.sgrid, this.pred, inp, dt, playerSpeed(this.pred, w ? w[0] : 'pistol'));
         } else {
           this.pred.x = me.x;
@@ -201,11 +205,11 @@ export class Session {
         }
         if (now - this.lastInputSend >= INPUT_INTERVAL) {
           this.lastInputSend = now;
-          this.net.toHost({
+          const sent = this.net.toHost({
             t: 'in', mx: inp.mx, mz: inp.mz, ax: inp.ax, az: inp.az, fire: inp.fire, sprint: inp.sprint, use: inp.use,
-            acts: this.pendingActs, px: this.pred.x, pz: this.pred.z, moving: this.pred.moving, sprinting: this.pred.sprinting, stamina: this.pred.stamina,
+            acts: this.pendingActs, px: this.pred.x, pz: this.pred.z, tp: this.pred.tp, moving: this.pred.moving, sprinting: this.pred.sprinting, stamina: this.pred.stamina,
           });
-          this.pendingActs = {};
+          if (sent) this.pendingActs = {};
         }
         view = {
           localId: this.localId, smooth: true, localPos: this.pred, localMoving: this.pred.moving,
@@ -234,11 +238,27 @@ export class Session {
     }
   }
 
+  // Joined players hear their own shots immediately instead of a network round trip
+  // later. Mirrors the host's fire-rate rule; the host's echo of the shot is muted.
+  predictFire(inp, me, w, dt, now) {
+    this.localFireCd -= dt;
+    if (!inp.fire || !w || w[2] <= 0 || w[4] || me.rl >= 0 || this.localFireCd > 0) return;
+    const def = WEAPONS[w[0]];
+    let rate = def.rate;
+    if (me.pk.includes('rapid')) rate *= 1.33;
+    if (me.bo && me.bo.trigger) rate *= 1 + 0.08 * me.bo.trigger;
+    this.localFireCd = 1 / rate;
+    this.localFireT = now;
+    this.app.audio.play(def.sound, this.pred.x, this.pred.z, 0.8);
+  }
+
   playSounds(events, snap, dt) {
     const a = this.app.audio;
     for (const e of events) {
       switch (e.k) {
         case 'fire': {
+          // already played locally (see predictFire), unless we haven't predicted a shot lately
+          if (this.role === 'client' && e.p === this.localId && performance.now() - this.localFireT < 600) break;
           const w = WEAPONS[WIDS[e.w]];
           a.play(w.sound, e.x, e.z, e.p === this.localId ? 0.8 : 0.5);
           break;

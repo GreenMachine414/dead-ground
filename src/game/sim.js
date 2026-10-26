@@ -17,10 +17,14 @@ export const WIDS = Object.keys(WEAPONS);
 export const PLAYER_R = 0.4;
 export const BASE_SPEED = 5.4;
 const STATE_CODE = { alive: 0, down: 1, dead: 2 };
-const ZSTATE = { rise: 0, move: 1, attack: 2, windup: 3, charge: 4, leap: 5, stun: 6 };
+const ZSTATE = { rise: 0, move: 1, attack: 2, windup: 3, charge: 4, leap: 5, stun: 6, drain: 2 };
 const BOX_COST = 950;
 const MAX_GRENADES = 4;
-const BOSS_CD = { charge: 7, slam: 4, throw: 5, volley: 5.5, summon: 15, teleport: 7, shockwave: 9, leap: 6 };
+const BOSS_CD = {
+  charge: 7, slam: 4, throw: 5, volley: 5.5, summon: 15, teleport: 7, shockwave: 9, leap: 6,
+  sweep: 3.5, hook: 7, bile: 8, devour: 14, barrage: 9, rally: 12, eggs: 11, mirror: 13, drain: 10,
+};
+const BOSS_WINDUP = { slam: 0.8, charge: 0.9, summon: 1.0, sweep: 0.75, hook: 0.55, bile: 0.7, devour: 1.0, barrage: 0.9, rally: 0.6, eggs: 0.8, mirror: 0.5, drain: 0.4 };
 
 const dist2 = (ax, az, bx, bz) => (ax - bx) * (ax - bx) + (az - bz) * (az - bz);
 const angDiff = (a, b) => {
@@ -303,7 +307,8 @@ export class Game {
       return;
     }
     if (input.px !== undefined) {
-      if (Number.isFinite(input.px) && Number.isFinite(input.pz)) {
+      // after a server-side move (respawn, hook) ignore positions predicted before the client saw it
+      if (Number.isFinite(input.px) && Number.isFinite(input.pz) && (input.tp === undefined || input.tp === p.tp)) {
         p.x = Math.max(1, Math.min(this.world.W - 1, input.px));
         p.z = Math.max(1, Math.min(this.world.H - 1, input.pz));
       }
@@ -537,6 +542,7 @@ export class Game {
       crit = true;
     }
     if (z.def.armor && kind !== 'explosive' && kind !== 'ability') dmg *= 1 - z.def.armor;
+    if (z.rally > 0) dmg *= 0.6;
     if (this.instakill > 0 && !z.boss && !z.mini) dmg = Math.max(dmg, z.hp + 1);
     z.hp -= dmg;
     z.hurtT = 0.12;
@@ -563,13 +569,14 @@ export class Game {
       this.givePoints(p, kind === 'melee' ? 130 : z.def.points);
       if (p.boons.vamp && p.state === 'alive') p.hp = Math.min(p.maxHp, p.hp + 3 * p.boons.vamp);
     }
+    this.emit({ k: 'die', id: z.id, x: z.x, z: z.z, ty: ZTYPES.indexOf(z.type), a: z.ang });
+    if (kind === 'devour') return;
     // XP: killer gets full, teammates a share (bosses: everyone gets full)
     const xp = Math.round(z.def.points / 5);
     for (const q of this.players) {
       if (q === p || z.boss || z.mini) this.gainXp(q, xp);
       else this.gainXp(q, Math.round(xp * 0.25));
     }
-    this.emit({ k: 'die', id: z.id, x: z.x, z: z.z, ty: ZTYPES.indexOf(z.type), a: z.ang });
     if (z.def.explode) this.explode(z.x, z.z, z.def.explode.radius, z.def.explode.damage * this.diff.damage, { enemy: true });
     if (z.boss || z.mini) {
       this.lastBossPos = { x: z.x, z: z.z };
@@ -984,21 +991,6 @@ export class Game {
         },
       };
     }
-    // ammo crates
-    for (const a of this.world.spots.ammo) {
-      if (near(a.x, a.z, 2.1)) {
-        const ws = this.wstat(p, cw);
-        if (cw.reserve >= ws.reserve) return { text: 'Ammo full' };
-        return {
-          cost: ws.ammoCost,
-          text: '[E] Refill ammo (' + WEAPONS[cw.id].name + ') — ' + ws.ammoCost,
-          act: () => {
-            cw.reserve = ws.reserve;
-            this.emit({ k: 'sfx', s: 'ammo', x: a.x, z: a.z });
-          },
-        };
-      }
-    }
     // perks
     for (const s of this.world.spots.perk) {
       if (near(s.x, s.z, 2.1)) {
@@ -1377,6 +1369,8 @@ export class Game {
     if (def.fixedHp) {
       hp = def.hp * (1 + 0.75 * (n - 1));
       if (this.mode === 'endless') hp *= 0.6 + 0.08 * this.wave;
+    } else if (def.egg || def.clone) {
+      hp = def.hp * (1 + 0.5 * (n - 1)) * (1 + 0.05 * this.wave);
     } else {
       hp = def.hp * (1 + 0.16 * (this.wave - 1)) * this.diff.hp * (1 + 0.35 * (n - 1));
     }
@@ -1392,8 +1386,10 @@ export class Game {
       trailT: 0, hurtT: 0,
     };
     if (zb.boss || zb.mini) for (const a of def.abilities) zb.cds[a] = 2 + this.rng() * 3;
+    if (def.egg) zb.hatchT = def.egg.hatch;
+    if (def.clone) zb.life = def.clone.life;
     this.zombies.push(zb);
-    this.emit({ k: 'spawn', x, z, big: zb.boss || zb.mini ? 1 : 0 });
+    if (rise) this.emit({ k: 'spawn', x, z, big: zb.boss || zb.mini ? 1 : 0 });
     if (zb.boss || zb.mini) this.emit({ k: 'boss', s: def.name, b: zb.boss ? 1 : 0 });
     return zb;
   }
@@ -1405,11 +1401,12 @@ export class Game {
     // screamer buffs
     for (const z of zs) {
       if (z.buff > 0) z.buff -= dt;
+      if (z.rally > 0) z.rally -= dt;
     }
     for (const z of zs) {
       if (z.def.scream && z.state !== 'rise') {
         const r2 = z.def.scream.radius * z.def.scream.radius;
-        for (const o of zs) if (o !== z && dist2(o.x, o.z, z.x, z.z) < r2) o.buff = 0.4;
+        for (const o of zs) if (o !== z && dist2(o.x, o.z, z.x, z.z) < r2) o.buff = Math.max(o.buff, 0.4);
       }
     }
     for (const z of [...zs]) {
@@ -1428,6 +1425,19 @@ export class Game {
       if (z.stun > 0) {
         z.stun -= dt;
         continue;
+      }
+      if (z.def.egg) {
+        z.hatchT -= dt;
+        if (z.hatchT <= 0) this.hatchEgg(z);
+        continue;
+      }
+      if (z.def.clone) {
+        z.life -= dt;
+        if (z.life <= 0) {
+          this.emit({ k: 'blink', x: z.x, z: z.z, x2: z.x, z2: z.z });
+          this.removeZombie(z);
+          continue;
+        }
       }
       // target selection
       z.targetT -= dt;
@@ -1528,7 +1538,7 @@ export class Game {
         const d = Math.sqrt(d2);
         const push = (rr - d) * 0.5;
         const nx = dx / d, nz = dz / d;
-        const wa = a.boss || a.mini ? 0.1 : 1, wb = b.boss || b.mini ? 0.1 : 1;
+        const wa = a.def.egg ? 0 : a.boss || a.mini ? 0.1 : 1, wb = b.def.egg ? 0 : b.boss || b.mini ? 0.1 : 1;
         if (!circleBlocked(this.world, this.sgrid, a.x - nx * push * wa, a.z - nz * push * wa, a.cr)) {
           a.x -= nx * push * wa;
           a.z -= nz * push * wa;
@@ -1636,6 +1646,8 @@ export class Game {
       z.enraged = true;
       z.speed *= 1.35;
       this.emit({ k: 'msg', s: def.name + ' is ENRAGED!' });
+      this.hazards.push({ id: this.nextId++, kind: 'ring', x: z.x, z: z.z, r: 0.5, maxR: 15, speed: 9, t: 2, dmg: 30 * this.diff.damage, hit: new Set() });
+      if (def.summon) this.summonAround(z, def.summon);
     }
     const cdMult = enraged ? 0.6 : 1;
     for (const a in z.cds) z.cds[a] -= dt;
@@ -1657,6 +1669,24 @@ export class Game {
         if (s) this.damageStruct(s, 400);
         z.t = 0;
         this.emit({ k: 'shake', i: 0.4 });
+      }
+      if (z.t <= 0) z.state = 'move';
+      return true;
+    }
+    if (z.state === 'drain') {
+      z.t -= dt;
+      z.tickT -= dt;
+      const v = z.drainTgt;
+      if (!v || v.state !== 'alive' || dist2(v.x, v.z, z.x, z.z) > 13 * 13 || !hasLOS(this.world, z.x, z.z, v.x, v.z)) {
+        z.state = 'move';
+        return true;
+      }
+      z.ang = Math.atan2(v.z - z.z, v.x - z.x);
+      if (z.tickT <= 0) {
+        z.tickT = 0.25;
+        this.hurtPlayer(v, 7 * this.diff.damage);
+        z.hp = Math.min(z.maxHp, z.hp + z.maxHp * 0.004);
+        this.emit({ k: 'beam', x: z.x, z: z.z, x2: v.x, z2: v.z });
       }
       if (z.t <= 0) z.state = 'move';
       return true;
@@ -1694,13 +1724,102 @@ export class Game {
         }
         this.emit({ k: 'sfx', s: kind === 'rocket' ? 'rocket' : 'spit', x: z.x, z: z.z });
       } else if (ab === 'summon') {
-        const sm = def.summon;
-        const count = sm.count + Math.floor(this.n / 2);
-        for (let i = 0; i < count; i++) {
-          const a = (i / count) * Math.PI * 2;
-          const sx = z.x + Math.cos(a) * (z.r + 2), sz = z.z + Math.sin(a) * (z.r + 2);
-          if (!circleBlocked(this.world, this.sgrid, sx, sz, 0.45)) this.spawnZombie(sm.type, sx, sz);
+        this.summonAround(z, def.summon);
+      } else if (ab === 'sweep') {
+        // wide scythe arc in the direction locked in at the start of the windup
+        const r = 5.2, half = 1.15;
+        const inArc = (x, zz, rr) => Math.hypot(x - z.x, zz - z.z) < r + rr && Math.abs(angDiff(Math.atan2(zz - z.z, x - z.x), z.ang)) < half;
+        this.emit({ k: 'sweep', x: z.x, z: z.z, a: z.ang, r, h: half });
+        for (const p of this.players) if (p.state === 'alive' && inArc(p.x, p.z, p.r)) this.hurtPlayer(p, z.damage * 1.2);
+        for (const s of [...this.structs]) if (inArc(s.x, s.z, 0.5)) this.damageStruct(s, 250);
+      } else if (ab === 'hook') {
+        const a = Math.atan2(tgt.z - z.z, tgt.x - z.x);
+        z.ang = a;
+        this.projs.push({
+          id: this.nextId++, kind: 'hook', owner: 'z', zid: z.id, x: z.x + Math.cos(a) * z.r, y: 1.4, z: z.z + Math.sin(a) * z.r,
+          vx: Math.cos(a) * 24, vy: 0, vz: Math.sin(a) * 24, g: 0, dmg: 12 * this.diff.damage, life: 0.8, r: 0.45,
+        });
+        this.emit({ k: 'sfx', s: 'throw', x: z.x, z: z.z });
+      } else if (ab === 'bile') {
+        // a trail of acid pools spewed along the locked-in direction, stopped by walls
+        const a = z.ang, W = this.world.W;
+        let n = 0;
+        for (let i = 0; i < 6; i++) {
+          const d = z.r + 1 + i * 1.7;
+          const bx = z.x + Math.cos(a) * d, bz = z.z + Math.sin(a) * d;
+          const cx = Math.floor(bx), cz = Math.floor(bz);
+          if (cx < 0 || cz < 0 || cx >= W || cz >= this.world.H) break;
+          const v = this.world.grid[cz * W + cx];
+          if (v === 1 || v === 2) break;
+          this.hazards.push({ id: this.nextId++, kind: 'acid', x: bx, z: bz, r: 1.5, t: 5 + i * 0.15, dps: 18 * this.diff.damage });
+          n++;
         }
+        this.emit({ k: 'bile', x: z.x, z: z.z, a, d: z.r + 1 + n * 1.7 });
+        this.emit({ k: 'sfx', s: 'spit', x: z.x, z: z.z });
+      } else if (ab === 'devour') {
+        const prey = this.minionsNear(z, 8).sort((p, q) => dist2(p.x, p.z, z.x, z.z) - dist2(q.x, q.z, z.x, z.z)).slice(0, 5);
+        for (const o of prey) {
+          this.emit({ k: 'devour', x: o.x, z: o.z, x2: z.x, z2: z.z });
+          this.killZombie(o, null, 'devour');
+          z.hp = Math.min(z.maxHp, z.hp + z.maxHp * 0.04);
+        }
+        if (prey.length) this.emit({ k: 'msg', s: def.name + ' devours its minions!', sub: 'Thin out the horde so it cannot heal' });
+      } else if (ab === 'barrage') {
+        // artillery shells walk in on every player in range; red rings mark the impact zones
+        for (const p of this.players) {
+          if (p.state !== 'alive' || dist2(p.x, p.z, z.x, z.z) > 32 * 32) continue;
+          this.emit({ k: 'strike', x: p.x, z: p.z, r: 4 });
+          for (let i = 0; i < 4; i++) {
+            const a = this.rng() * Math.PI * 2, r = Math.sqrt(this.rng()) * 3;
+            this.strikes.push({ t: 1.3 + i * 0.22, x: p.x + Math.cos(a) * r, z: p.z + Math.sin(a) * r, dmg: 32 * this.diff.damage, r: 2.2, enemy: true });
+          }
+        }
+        this.emit({ k: 'sfx', s: 'strike', x: z.x, z: z.z });
+      } else if (ab === 'rally') {
+        for (const o of this.minionsNear(z, 12)) {
+          o.rally = 6;
+          o.buff = Math.max(o.buff, 6);
+        }
+        this.emit({ k: 'rally', x: z.x, z: z.z, r: 12 });
+      } else if (ab === 'eggs') {
+        const count = 3 + (this.n > 2 ? 1 : 0);
+        for (let i = 0; i < count; i++) {
+          for (let tries = 0; tries < 6; tries++) {
+            const a = this.rng() * Math.PI * 2, r = z.r + 1.5 + this.rng() * 3;
+            const ex = z.x + Math.cos(a) * r, ez = z.z + Math.sin(a) * r;
+            if (!circleBlocked(this.world, this.sgrid, ex, ez, 0.6)) {
+              this.spawnZombie('egg', ex, ez, false);
+              break;
+            }
+          }
+        }
+        this.emit({ k: 'eggs', x: z.x, z: z.z });
+        this.emit({ k: 'sfx', s: 'spit', x: z.x, z: z.z });
+      } else if (ab === 'mirror') {
+        // blink next to the target and leave decoys that look exactly like the real thing
+        const spots = [];
+        for (let tries = 0; tries < 24 && spots.length < 3; tries++) {
+          const a = this.rng() * Math.PI * 2, r = 5 + this.rng() * 3;
+          const nx = tgt.x + Math.cos(a) * r, nz = tgt.z + Math.sin(a) * r;
+          if (!circleBlocked(this.world, this.sgrid, nx, nz, z.cr) && spots.every((q) => dist2(q.x, q.z, nx, nz) > 9)) spots.push({ x: nx, z: nz });
+        }
+        if (spots.length) {
+          const me = spots[Math.floor(this.rng() * spots.length)];
+          this.emit({ k: 'blink', x: z.x, z: z.z, x2: me.x, z2: me.z, big: 1 });
+          z.x = me.x;
+          z.z = me.z;
+          for (const q of spots) {
+            if (q === me) continue;
+            const c = this.spawnZombie('pzclone', q.x, q.z, false);
+            c.ang = Math.atan2(tgt.z - q.z, tgt.x - q.x);
+            this.emit({ k: 'blink', x: q.x, z: q.z, x2: q.x, z2: q.z, big: 1 });
+          }
+        }
+      } else if (ab === 'drain') {
+        z.state = 'drain';
+        z.t = 2.6;
+        z.tickT = 0;
+        z.drainTgt = tgt;
       } else if (ab === 'teleport') {
         for (let tries = 0; tries < 12; tries++) {
           const a = this.rng() * Math.PI * 2, r = 4 + this.rng() * 4;
@@ -1737,29 +1856,104 @@ export class Game {
     }
     if (z.state === 'attack') return false;
     // choose an ability
-    const ok = {
-      charge: dist > 5 && dist < 22 && z.los,
-      slam: dist < 2 + def.scale,
-      throw: dist > 6 && dist < 26 && z.los,
-      volley: dist < 20 && z.los,
-      summon: this.zombies.length < this.maxAlive + 12,
-      teleport: dist > 9,
-      shockwave: dist < 14,
-      leap: dist > 5 && dist < 14 && z.los,
+    const ok = (a) => {
+      switch (a) {
+        case 'charge': return dist > 5 && dist < 22 && z.los;
+        case 'slam': return dist < 2 + def.scale;
+        case 'throw': return dist > 6 && dist < 26 && z.los;
+        case 'volley': return dist < 20 && z.los;
+        case 'summon': return this.zombies.length < this.maxAlive + 12;
+        case 'teleport': return dist > 9;
+        case 'shockwave': return dist < 14;
+        case 'leap': return dist > 5 && dist < 14 && z.los;
+        case 'sweep': return dist < 5.5;
+        case 'hook': return dist > 6 && dist < 17 && z.los;
+        case 'bile': return dist < 11 && z.los;
+        case 'devour': return z.hp < z.maxHp * 0.85 && this.minionsNear(z, 8).length >= 2;
+        case 'barrage': return dist < 30;
+        case 'rally': return this.minionsNear(z, 12).length >= 3;
+        case 'eggs': return this.zombies.reduce((n, o) => n + (o.def.egg ? 1 : 0), 0) < 6;
+        case 'mirror': return dist < 22 && !this.zombies.some((o) => o.def.clone);
+        case 'drain': return dist < 10 && z.los;
+      }
+      return false;
     };
     for (const a of def.abilities) {
-      if (z.cds[a] > 0 || !ok[a]) continue;
+      if (z.cds[a] > 0 || !ok(a)) continue;
       z.cds[a] = BOSS_CD[a] * cdMult * (0.8 + this.rng() * 0.4);
       z.state = 'windup';
       z.pending = a;
-      z.t = a === 'slam' ? 0.8 : a === 'charge' ? 0.9 : a === 'summon' ? 1.0 : 0.6;
+      z.t = BOSS_WINDUP[a] ?? 0.6;
       if (enraged) z.t *= 0.7;
       z.ang = Math.atan2(tgt.z - z.z, tgt.x - z.x);
-      this.emit({ k: 'tele', id: z.id, a, x: z.x, z: z.z });
-      if (a === 'summon') this.emit({ k: 'sfx', s: 'roar', x: z.x, z: z.z });
+      this.emit({ k: 'tele', id: z.id, a, x: z.x, z: z.z, ang: z.ang, t: z.t });
+      if (a === 'summon' || a === 'rally') this.emit({ k: 'sfx', s: 'roar', x: z.x, z: z.z });
       return true;
     }
     return false;
+  }
+
+  summonAround(z, sm) {
+    const count = sm.count + Math.floor(this.n / 2);
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2;
+      const sx = z.x + Math.cos(a) * (z.r + 2), sz = z.z + Math.sin(a) * (z.r + 2);
+      if (!circleBlocked(this.world, this.sgrid, sx, sz, 0.45)) this.spawnZombie(sm.type, sx, sz);
+    }
+  }
+
+  // regular zombies (not bosses or eggs) within r of z
+  minionsNear(z, r) {
+    const out = [];
+    for (const o of this.zombies) {
+      if (o === z || o.boss || o.mini || o.def.egg || o.state === 'rise') continue;
+      if (dist2(o.x, o.z, z.x, z.z) < r * r) out.push(o);
+    }
+    return out;
+  }
+
+  // removes a zombie without a kill (no points, XP or drops)
+  removeZombie(z) {
+    z.dead = true;
+    this.zombies.splice(this.zombies.indexOf(z), 1);
+  }
+
+  hatchEgg(egg) {
+    const h = egg.def.egg;
+    this.removeZombie(egg);
+    this.emit({ k: 'hatch', x: egg.x, z: egg.z });
+    for (let i = 0; i < h.count; i++) {
+      const a = (i / h.count) * Math.PI * 2 + this.rng();
+      let sx = egg.x + Math.cos(a) * 0.6, sz = egg.z + Math.sin(a) * 0.6;
+      if (circleBlocked(this.world, this.sgrid, sx, sz, 0.4)) {
+        sx = egg.x;
+        sz = egg.z;
+      }
+      this.spawnZombie(h.type, sx, sz, false);
+    }
+  }
+
+  // Harvester's hook: yank the player to just in front of the boss
+  hookPull(pr, p) {
+    const z = this.zombies.find((q) => q.id === pr.zid);
+    if (!z || p.state !== 'alive') return;
+    const dx = p.x - z.x, dz = p.z - z.z;
+    const d = Math.hypot(dx, dz) || 1;
+    const fromX = p.x, fromZ = p.z;
+    // slide toward the boss and stop at the first spot that would be blocked
+    let tx = p.x, tz = p.z;
+    const stop = z.r + p.r + 0.6;
+    for (let k = d; k >= stop; k -= 0.25) {
+      const nx = z.x + (dx / d) * k, nz = z.z + (dz / d) * k;
+      if (circleBlocked(this.world, this.sgrid, nx, nz, p.r)) break;
+      tx = nx;
+      tz = nz;
+    }
+    p.x = tx;
+    p.z = tz;
+    p.tp++;
+    z.atkCd = Math.min(z.atkCd, 0.25);
+    this.emit({ k: 'yank', x: fromX, z: fromZ, x2: tx, z2: tz, zx: z.x, zz: z.z });
   }
 
   // ------------------------------------------------------------ projectiles / hazards
@@ -1817,6 +2011,7 @@ export class Game {
                 else {
                   this.hurtPlayer(p, pr.dmg);
                   if (pr.kind === 'spit') this.acidPuddle(pr.x, pr.z);
+                  if (pr.kind === 'hook') this.hookPull(pr, p);
                 }
                 done = true;
                 break;
@@ -1881,7 +2076,7 @@ export class Game {
       s.t -= dt;
       if (s.t > 0) continue;
       this.strikes.splice(this.strikes.indexOf(s), 1);
-      this.explode(s.x, s.z, s.r, s.dmg, { pid: s.pid });
+      this.explode(s.x, s.z, s.r, s.dmg, s.enemy ? { enemy: true } : { pid: s.pid });
       if (s.napalm) this.hazards.push({ id: this.nextId++, kind: 'napalm', x: s.x, z: s.z, r: 2, t: 4, dps: s.dmg * 0.15, pid: s.pid });
     }
   }
@@ -2048,9 +2243,9 @@ export class Game {
       })),
       Z: this.zombies.map((z) => [
         z.id, ZTYPES.indexOf(z.type), r2(z.x), r2(z.z), r2(z.ang), r2(z.hp / z.maxHp),
-        ZSTATE[z.stun > 0 ? 'stun' : z.state] ?? 1, r2(z.state === 'rise' ? z.t : 0), (z.burn > 0 ? 1 : 0) | (z.hurtT > 0 ? 2 : 0) | (z.buff > 0 ? 4 : 0) | (z.enraged ? 8 : 0),
+        ZSTATE[z.stun > 0 ? 'stun' : z.state] ?? 1, r2(z.state === 'rise' ? z.t : 0), (z.burn > 0 ? 1 : 0) | (z.hurtT > 0 ? 2 : 0) | (z.buff > 0 ? 4 : 0) | (z.enraged ? 8 : 0) | (z.rally > 0 ? 16 : 0),
       ]),
-      R: this.projs.map((p) => [p.id, p.kind, r2(p.x), r2(p.y), r2(p.z), p.forged ? 1 : 0]),
+      R: this.projs.map((p) => [p.id, p.kind, r2(p.x), r2(p.y), r2(p.z), p.kind === 'hook' ? p.zid : p.forged ? 1 : 0]),
       S: this.structs.map((s) => ({
         id: s.id, k: s.kind, o: s.owner, x: r2(s.x), z: r2(s.z), c: s.cells, hp: r2(s.hp / s.maxHp), a: r2(s.ang || 0),
         l: s.lvl, sp: s.spikes ? 1 : 0, lf: s.kind === 'turret' ? r2(s.life / s.maxLife) : 1,

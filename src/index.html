@@ -5,7 +5,7 @@
     <title>Dead Ground</title>
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data: blob:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: https://0.peerjs.com; img-src 'self' data: blob:"
     />
     <link rel="stylesheet" href="style.css" />
   </head>
@@ -67,15 +67,17 @@
         <header class="screen-head"><button class="back" data-go="main">← Back</button><h2>Join Co-op</h2></header>
         <div class="form panel">
           <label>Your name <input id="join-name" maxlength="16" /></label>
-          <label>Host address (IP) <input id="join-addr" placeholder="192.168.1.20" /></label>
-          <label>Port <input id="join-port" type="number" /></label>
-          <button id="join-go" class="big">Connect</button>
+          <label>Game code <input id="join-code" class="code-input" maxlength="8" placeholder="ABC123" autocomplete="off" spellcheck="false" /></label>
+          <button id="join-go" class="big">Join</button>
           <div id="join-status" class="hint"></div>
-          <p class="hint">
-            Ask the host for the address shown in their lobby. On the same Wi-Fi/LAN, use their local IP. Over the internet,
-            the host must forward TCP port 27015 on their router (or both of you can use a virtual LAN such as Tailscale, ZeroTier
-            or Radmin VPN and use that IP).
-          </p>
+          <p class="hint">Ask the host for the 6-letter code shown in their lobby. Works on the same Wi-Fi or from anywhere over the internet.</p>
+          <details class="join-ip">
+            <summary>No internet? Join by IP address instead</summary>
+            <p class="hint">Only works on the same network. Use the LAN address shown in the host's lobby.</p>
+            <label>Host address (IP) <input id="join-addr" placeholder="192.168.1.20" /></label>
+            <label>Port <input id="join-port" type="number" /></label>
+            <button id="join-ip-go">Connect by IP</button>
+          </details>
         </div>
       </section>
 
@@ -99,6 +101,13 @@
           <label>Effects volume <input id="set-sfx" type="range" min="0" max="1" step="0.05" /></label>
           <label>Music volume <input id="set-music" type="range" min="0" max="1" step="0.05" /></label>
           <label class="check"><input id="set-shake" type="checkbox" /> Screen shake</label>
+          <label>Graphics
+            <select id="set-graphics">
+              <option value="auto">Auto (lowers detail if the game slows down)</option>
+              <option value="high">High</option>
+              <option value="low">Low (fastest)</option>
+            </select>
+          </label>
           <button id="set-fullscreen">Toggle Fullscreen (F11)</button>
           <button id="set-reset" class="danger">Reset all progress</button>
         </div>
@@ -131,7 +140,7 @@
             <h3>Surviving</h3>
             <ul>
               <li>Zombies come in <b>rounds</b>. Each round has more, tougher zombies. Clear the round to get a short break.</li>
-              <li>Earn <b>points</b> for every hit and kill. Spend them on the <b>Mystery Box</b> (950), <b>ammo crates</b>, <b>perk machines</b>, clearing <b>debris</b>, and the <b>Weapon Forge</b> (5000) which upgrades your current gun.</li>
+              <li>Earn <b>points</b> for every hit and kill. Spend them on the <b>Mystery Box</b> (950), <b>perk machines</b>, clearing <b>debris</b>, and the <b>Weapon Forge</b> (5000) which upgrades your current gun.</li>
               <li>Guns are found by <b>searching</b> weapon racks, lockers, crates, car trunks and fallen survivors (look for the <b>✦ sparkle</b>, hold <b>E</b>). Guns roll a rarity — <span style="color:#d9d4c7">Common</span>, <span style="color:#6fd36a">Uncommon</span>, <span style="color:#4fa8ff">Rare</span>, <span style="color:#bb6cff">Epic</span>, <span style="color:#ffa53a">Legendary</span> — with more damage, bigger magazines and faster reloads. Military chests always hold Rare or better. Searched containers sometimes restock between rounds.</li>
               <li>Kills earn <b>XP</b>. Each level, pick one of three upgrades (1/2/3) — they stack for the rest of the run.</li>
               <li>Zombies drop power-ups: Max Ammo, Insta-Kill, Double Points and Kaboom.</li>

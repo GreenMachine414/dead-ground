@@ -429,6 +429,52 @@ input[type='range'] {
   padding: 8px 14px;
   border-radius: 14px;
 }
+#lobby-net .code {
+  font-family: var(--display);
+  font-size: 26px;
+  letter-spacing: 4px;
+  color: var(--gold);
+  vertical-align: middle;
+  margin: 0 6px;
+}
+#lobby-net button {
+  font-size: 14px;
+  padding: 4px 12px;
+  vertical-align: middle;
+}
+#lobby-net .lan {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.8;
+  margin-top: 4px;
+}
+.code-input {
+  font-family: var(--display);
+  font-size: 28px;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  text-align: center;
+}
+.join-ip summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--parch);
+}
+.join-ip[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+select {
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 15px;
+  background: var(--parch);
+  color: var(--ink);
+  border: 3px solid var(--edge);
+  padding: 8px 12px;
+  border-radius: 12px;
+}
 #lobby-net:empty {
   display: none;
 }
@@ -715,6 +761,21 @@ input[type='range'] {
 }
 #game canvas {
   display: block;
+}
+.light-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+/* soft vignette over the game view; a static layer costs nothing per frame */
+#game::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 45%, rgba(10, 8, 20, 0.45) 100%);
 }
 #hud {
   position: fixed;

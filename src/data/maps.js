@@ -152,9 +152,6 @@ export const MAPS = [
       c.spot('box', 44, 64);
       c.spot('box', 22, 50);
       c.spot('box', 70, 40);
-      c.spot('ammo', 58, 40);
-      c.spot('ammo', 30, 58);
-      c.spot('ammo', 70, 82);
       c.spot('forge', 52, 84);
       c.forestBorder(4, 0.55);
       c.scatter(60, (x, z) => c.tree(x, z, 0.8 + rng() * 0.6));
@@ -270,7 +267,6 @@ export const MAPS = [
           } else if (key === '2,2') {
             c.decor('lot', x, z, { w, d });
             for (let n = 0; n < 6; n++) c.scatter(1, (cx, cz) => (c.free(cx - 1, cz, 5, 2) ? c.lootCar(cx, cz, true) : false), [x + 2, z + 1, w - 6, d - 3]);
-            c.spot('ammo', x + 11, z + 11);
             c.reserve(x, z, w, d);
           } else if (key === '2,0') {
             c.decor('canopy', x + 4, z + 6, { w: 14, d: 8 });
@@ -322,8 +318,6 @@ export const MAPS = [
       c.spot('perk', 90, 60, { perk: 'rapid' });
       c.spot('box', 60, 62);
       c.spot('box', 90, 40);
-      c.spot('ammo', 28, 46);
-      c.spot('ammo', 88, 100);
       c.spot('forge', 60, 100);
       c.scatter(24, (x, z) => (rng() < 0.5 ? c.barrel(x, z) : c.crate(x, z)));
     },
@@ -439,10 +433,6 @@ export const MAPS = [
       c.spot('box', 24, 64);
       c.spot('box', 70, 30);
       c.spot('box', 38, 104);
-      c.spot('ammo', 52, 46);
-      c.spot('ammo', 20, 64);
-      c.spot('ammo', 78, 96);
-      c.spot('ammo', 108, 70);
       for (const [x, z] of [[11, 30], [11, 60], [86, 40], [60, 108], [36, 38]]) c.lamp(x, z, 0xfff0c0);
       c.scatter(5, (x, z) => c.loot('body', x, z), [2, 2, 116, 116]);
       c.scatter(22, (x, z) => c.rock(x, z, 1 + rng.int(0, 2), 1 + rng.int(0, 1)));
@@ -562,9 +552,6 @@ export const MAPS = [
       c.spot('box', 76, 64);
       c.spot('box', 26, 70);
       c.spot('box', 96, 32);
-      c.spot('ammo', 52, 56);
-      c.spot('ammo', 30, 100);
-      c.spot('ammo', 100, 60);
       c.spot('forge', 72, 58);
       c.forestBorder(5, 0.6);
       c.scatter(5, (x, z) => c.loot('crate', x, z, 's'), [8, 8, 104, 104]);
@@ -672,10 +659,6 @@ export const MAPS = [
       c.spot('box', 76, 100);
       c.spot('box', 30, 90);
       c.spot('box', 90, 30);
-      c.spot('ammo', 54, 92);
-      c.spot('ammo', 30, 54);
-      c.spot('ammo', 96, 74);
-      c.spot('ammo', 64, 34);
       c.spot('forge', 74, 116);
     },
   },

@@ -299,7 +299,8 @@ export class Hud {
       const rows = snap.P.map((p) => `<tr><td>${esc(p.n)}</td><td>${CHARACTERS[p.c].name}</td><td>${p.rk}</td><td>${p.pts}</td><td>${p.k}</td><td>${p.dn}</td><td>${p.rvs}</td></tr>`).join('');
       this.set('sb', el.score, `<table><tr><th>Survivor</th><th>Character</th><th>Level</th><th>Points</th><th>Kills</th><th>Downs</th><th>Revives</th></tr>${rows}</table>`, 'innerHTML');
     }
-    this.drawMinimap(snap, me);
+    // the minimap does not need 60 updates a second
+    if ((this.mmFrame = (this.mmFrame || 0) + 1) % 2 === 0) this.drawMinimap(snap, me);
   }
 
   drawMinimap(snap, me) {

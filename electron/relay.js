@@ -9,6 +9,10 @@ let host = null;
 let nextId = 1;
 const clients = new Map();
 
+// Game snapshots are skipped for a client whose socket is backed up, so a slow
+// connection gets the latest state instead of a growing queue of stale ones.
+const MAX_QUEUED = 64 * 1024;
+
 function send(ws, obj) {
   if (ws && ws.readyState === 1) ws.send(typeof obj === 'string' ? obj : JSON.stringify(obj));
 }
@@ -54,10 +58,10 @@ function start(port) {
         if (ws.role === 'host') {
           // {t:'h', to:<id|null>, d}
           const out = JSON.stringify({ t: 'h', d: msg.d });
-          if (msg.to == null) {
-            for (const c of clients.values()) send(c, out);
-          } else {
-            send(clients.get(msg.to), out);
+          const snap = msg.d && msg.d.t === 'snap';
+          for (const c of msg.to == null ? clients.values() : [clients.get(msg.to)]) {
+            if (snap && c && c.bufferedAmount > MAX_QUEUED) continue;
+            send(c, out);
           }
         } else {
           send(host, { t: 'c', from: ws.id, d: msg.d });

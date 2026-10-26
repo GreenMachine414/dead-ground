@@ -11,7 +11,37 @@ import * as S from './sprites.js';
 const BASE_U = 42; // css pixels per world unit at zoom 1
 const K = 0.55; // height -> screen offset factor
 const MAX_PARTICLES = 1800;
+const TILE = 512; // ground texture is split into tiles this many px square
+// Render resolution budget (device pixels). High-DPI laptop screens otherwise push
+// 4M+ pixels per frame through the 2D canvas.
+const MAX_PIXELS = 1920 * 1080;
+// Props that animate are always drawn live; everything else is cached in sprites.
+const ANIMATED = new Set(['windmill', 'fountain', 'campfire', 'console', 'reactor']);
+// Props that look alike share one sprite (variant chosen from position).
+const SHARED = new Set(['tree', 'bush', 'rock']);
+const SPRITE_BUILDS_PER_FRAME = 24;
+const QUALITY = { high: 1, low: 0.6 };
+
+// Display refresh interval, measured once at startup while the menu is idle, so the
+// auto-quality logic knows what frame rate this screen can actually show.
+let refreshMs = 0;
+export function measureRefresh() {
+  const d = [];
+  let last = 0;
+  const tick = (t) => {
+    if (last) d.push(t - last);
+    last = t;
+    if (d.length < 40) requestAnimationFrame(tick);
+    else refreshMs = d.sort((a, b) => a - b)[20];
+  };
+  requestAnimationFrame(tick);
+}
 const OUT = 'rgba(40,30,30,0.85)';
+// floating callouts over a boss when it winds up a signature move
+const BOSS_SHOUTS = {
+  sweep: 'SCYTHE!', hook: 'HOOK!', bile: 'BILE!', devour: 'FEAST!', barrage: 'ARTILLERY!', rally: 'RALLY!',
+  eggs: 'BROOD!', mirror: 'MIRROR!', drain: 'DRAIN!',
+};
 
 export class Renderer {
   constructor(container) {
@@ -20,9 +50,23 @@ export class Renderer {
     this.canvas.className = 'game-canvas';
     container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext('2d');
+    // darkness overlay is its own layer stacked on the game canvas, so the browser's
+    // compositor stretches and blends it instead of a full-screen canvas draw
     this.light = document.createElement('canvas');
+    this.light.className = 'light-canvas';
+    container.appendChild(this.light);
     this.lctx = this.light.getContext('2d');
     this.zoom = 1;
+    this.quality = 1; // lowered automatically if frames run slow
+    this.frameMs = 16;
+    this.slowT = 0;
+    this.fastT = 0;
+    this.frameNo = 0;
+    this.sprites = new Map();
+    this.spriteU = 0;
+    this.zoomedAt = 0;
+    this.textW = new Map();
+    this.glowSprites = new Map();
     this.shake = 0;
     this.shakeEnabled = true;
     this.cam = { x: 0, z: 0 };
@@ -33,20 +77,81 @@ export class Renderer {
   }
 
   resize() {
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.width = this.container.clientWidth || window.innerWidth;
     this.height = this.container.clientHeight || window.innerHeight;
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    dpr = Math.min(dpr, Math.sqrt(MAX_PIXELS / Math.max(1, this.width * this.height)));
+    this.dpr = Math.max(0.5, dpr * this.quality);
     this.canvas.width = Math.round(this.width * this.dpr);
     this.canvas.height = Math.round(this.height * this.dpr);
     this.canvas.style.width = this.width + 'px';
     this.canvas.style.height = this.height + 'px';
-    this.light.width = Math.ceil(this.canvas.width / 2);
-    this.light.height = Math.ceil(this.canvas.height / 2);
+    // darkness + vignette overlay: soft gradients, so quarter resolution is plenty
+    this.light.width = Math.ceil(this.canvas.width / 4);
+    this.light.height = Math.ceil(this.canvas.height / 4);
+  }
+
+  // 'auto' adapts to the frame rate; 'high' / 'low' are fixed
+  setGraphics(mode) {
+    this.graphics = mode;
+    const q = QUALITY[mode] || 1;
+    if (q !== this.quality) {
+      this.quality = q;
+      this.resize();
+    }
+  }
+
+  // Adaptive quality: if frames are consistently slower than the display's own
+  // refresh (the best rate we've seen), render fewer pixels and particles. Creep
+  // back up when there is headroom, but never retry a level that already failed twice.
+  adaptQuality(dt) {
+    if (this.graphics && this.graphics !== 'auto') return;
+    const ms = Math.min(100, dt * 1000);
+    this.frameMs += (ms - this.frameMs) * 0.05;
+    this.secMs = (this.secMs || 0) + ms;
+    this.secN = (this.secN || 0) + 1;
+    if (this.secMs >= 1000) {
+      const avg = this.secMs / this.secN;
+      // refresh baseline: best 1-second average, drifting up slowly in case it was a fluke
+      this.baseMs = Math.min(avg, refreshMs || Infinity, (this.baseMs || avg) * 1.002);
+      this.secMs = this.secN = 0;
+    }
+    if (!this.baseMs || this.time < 3) return;
+    // aim for the display's rate, but no higher than 60 fps
+    const target = Math.max(this.baseMs, 1000 / 60);
+    if (this.frameMs > Math.max(target * 1.3, target + 4)) {
+      this.slowT += dt;
+      this.fastT = 0;
+    } else if (this.frameMs < target * 1.1) {
+      this.fastT += dt;
+      this.slowT = 0;
+    } else {
+      this.slowT = 0;
+      this.fastT = 0;
+    }
+    this.failed = this.failed || {};
+    let q = this.quality;
+    if (this.slowT > 2 && q > 0.6) {
+      this.failed[q] = (this.failed[q] || 0) + 1;
+      q -= 0.1;
+    } else if (this.fastT > 15 && q < 1 && (this.failed[Math.round((q + 0.1) * 10) / 10] || 0) < 2) q += 0.1;
+    q = Math.round(q * 10) / 10;
+    if (q !== this.quality) {
+      this.quality = q;
+      this.slowT = 0;
+      this.fastT = 0;
+      this.resize();
+    }
+  }
+
+  get maxParticles() {
+    return Math.round(MAX_PARTICLES * (0.4 + 0.6 * this.quality));
   }
 
   dispose() {
     window.removeEventListener('resize', this.onResize);
     this.canvas.remove();
+    this.light.remove();
   }
 
   get u() {
@@ -64,19 +169,25 @@ export class Renderer {
     this.world = world;
     this.map = map;
     this.theme = world.theme;
-    this.ground = paintGround(world, this.theme);
-    this.gctx = this.ground.getContext('2d');
+    this.makeGroundTiles(paintGround(world, this.theme));
+    this.sprites.clear();
     this.rows = Array.from({ length: world.H + 1 }, () => []);
     for (const s of world.solids) {
       if (s.kind === 'water') continue;
       s.seed = s.x * 7.13 + s.z * 3.71;
+      if (SHARED.has(s.kind)) {
+        // a dozen shape variants per size, so neighbours rarely match and sprites are shared
+        const v = Math.floor(Math.abs(s.seed * 3.3)) % 12;
+        s.seed = v * 1.37 + 0.5;
+        if (s.s) s.s = Math.round(s.s * 10) / 10;
+        s.shareKey = `${s.kind}|${s.s || 1}|${s.variant || ''}|${v}|${s.w}|${s.d}|${s.h}`;
+      }
       this.rows[Math.min(world.H, Math.floor(s.z + s.d - 0.01))].push(s);
     }
     // static decorations & interactables
     this.statics = [];
     const sp = world.spots;
     for (const s of sp.perk) this.statics.push({ k: 'perk', x: s.x, z: s.z - 0.7, perk: s.perk });
-    for (const s of sp.ammo) this.statics.push({ k: 'ammo', x: s.x, z: s.z - 0.7 });
     if (sp.forge) this.statics.push({ k: 'forge', x: sp.forge.x, z: sp.forge.z - 0.8 });
     const stationNames = new Set();
     for (const st of map.story.steps) if (st.type === 'activate') st.spots.forEach((n) => stationNames.add(n));
@@ -100,6 +211,7 @@ export class Renderer {
     this.tracers = [];
     this.bolts = [];
     this.rings = [];
+    this.cones = [];
     this.texts = [];
     this.flashes = [];
     this.camInit = false;
@@ -121,8 +233,10 @@ export class Renderer {
 
   // ---------------------------------------------------------------- effects api
   emit(x, z, h, vx, vz, vh, col, life, size, o = {}) {
-    if (this.particles.length >= MAX_PARTICLES) this.particles.shift();
-    this.particles.push({ x, z, h, vx, vz, vh, col, life, max: life, size, g: o.g ?? 0, drag: o.drag ?? 0, grow: o.grow ?? 0, glow: o.glow, shape: o.shape });
+    const pt = { x, z, h, vx, vz, vh, col, life, max: life, size, g: o.g ?? 0, drag: o.drag ?? 0, grow: o.grow ?? 0, glow: o.glow, shape: o.shape };
+    // at the cap, recycle a slot instead of shifting the whole array
+    if (this.particles.length >= this.maxParticles) this.particles[(this.pSlot = ((this.pSlot || 0) + 1) % this.particles.length)] = pt;
+    else this.particles.push(pt);
   }
 
   burst(x, z, h, n, cols, speed, life, size, o = {}) {
@@ -138,20 +252,53 @@ export class Renderer {
     if (this.texts.length > 80) this.texts.shift();
   }
 
+  // The ground is kept as small tiles: decals then only touch (and re-upload) the
+  // tiles they overlap instead of one huge map-sized texture.
+  makeGroundTiles(ground) {
+    this.tiles = [];
+    this.tilesX = Math.ceil(ground.width / TILE);
+    this.tilesY = Math.ceil(ground.height / TILE);
+    for (let ty = 0; ty < this.tilesY; ty++) {
+      for (let tx = 0; tx < this.tilesX; tx++) {
+        const t = document.createElement('canvas');
+        t.width = Math.min(TILE, ground.width - tx * TILE);
+        t.height = Math.min(TILE, ground.height - ty * TILE);
+        const g = t.getContext('2d');
+        g.drawImage(ground, -tx * TILE, -ty * TILE);
+        this.tiles.push({ canvas: t, ctx: g, tx, ty });
+      }
+    }
+    ground.width = ground.height = 0;
+  }
+
   splat(x, z, r, col, a = 0.5) {
-    const g = this.gctx;
-    g.fillStyle = S.rgba(col, a);
-    S.blob(g, x * PX, z * PX, r * PX, x * 3 + z, 0.3, 8);
-    g.fill();
-    for (let i = 0; i < 4; i++) {
-      S.circle(g, (x + (Math.random() - 0.5) * r * 2.4) * PX, (z + (Math.random() - 0.5) * r * 2.4) * PX, r * PX * 0.18);
-      g.fill();
+    const drops = [];
+    for (let i = 0; i < 4; i++) drops.push([(x + (Math.random() - 0.5) * r * 2.4) * PX, (z + (Math.random() - 0.5) * r * 2.4) * PX]);
+    const R = r * PX * 2.4;
+    const x0 = Math.floor((x * PX - R) / TILE), x1 = Math.floor((x * PX + R) / TILE);
+    const z0 = Math.floor((z * PX - R) / TILE), z1 = Math.floor((z * PX + R) / TILE);
+    const fill = S.rgba(col, a);
+    for (let ty = Math.max(0, z0); ty <= Math.min(this.tilesY - 1, z1); ty++) {
+      for (let tx = Math.max(0, x0); tx <= Math.min(this.tilesX - 1, x1); tx++) {
+        const g = this.tiles[ty * this.tilesX + tx].ctx;
+        g.setTransform(1, 0, 0, 1, -tx * TILE, -ty * TILE);
+        g.fillStyle = fill;
+        S.blob(g, x * PX, z * PX, r * PX, x * 3 + z, 0.3, 8);
+        g.fill();
+        for (const [dx, dz] of drops) {
+          S.circle(g, dx, dz, r * PX * 0.18);
+          g.fill();
+        }
+        g.setTransform(1, 0, 0, 1, 0, 0);
+      }
     }
   }
 
   // ---------------------------------------------------------------- frame
   update(snap, events, dt, view) {
     this.time += dt;
+    this.frameNo++;
+    this.adaptQuality(dt);
     this.snap = snap;
     const k = view.smooth ? 1 - Math.exp(-dt * 14) : 1;
     this.syncPlayers(snap, dt, k, view);
@@ -214,7 +361,7 @@ export class Renderer {
       let o = this.zombies.get(id);
       if (!o) {
         const type = ZTYPES[ti];
-        o = { x, z: zz, a, walk: Math.random() * 6, type, def: ZOMBIES[type], look: S.zombieLook(type), seed: Math.random() * 9 };
+        o = { id, x, z: zz, a, walk: Math.random() * 6, type, def: ZOMBIES[type], look: S.zombieLook(type), seed: Math.random() * 9 };
         this.zombies.set(id, o);
       }
       if (Math.hypot(x - o.x, zz - o.z) > 4) {
@@ -235,10 +382,13 @@ export class Renderer {
       if (flags & 1 && Math.random() < dt * 22) this.emit(o.x + (Math.random() - 0.5) * 0.5, o.z, 0.6 + Math.random(), 0, 0, 1.6, Math.random() < 0.5 ? '#ff8a2a' : '#ffd04a', 0.5, 0.18, { grow: -0.6, glow: true });
       if (o.type === 'burner' && Math.random() < dt * 18) this.emit(o.x, o.z, 1.2, (Math.random() - 0.5), (Math.random() - 0.5), 1.4, '#ff7a2a', 0.5, 0.16, { glow: true });
       if (flags & 8 && Math.random() < dt * 25) this.emit(o.x + (Math.random() - 0.5), o.z, 1 + Math.random() * 2, 0, 0, 1.5, '#ff3020', 0.6, 0.2, { glow: true });
+      if (flags & 16 && Math.random() < dt * 6) this.emit(o.x + (Math.random() - 0.5) * 0.6, o.z, 1.8, 0, 0, 1.2, '#ffd65a', 0.5, 0.1, { glow: true });
     }
     for (const [id, o] of this.zombies) {
       if (!seen.has(id)) {
         this.zombies.delete(id);
+        // eggs burst and decoys vanish: no corpse
+        if (o.def.egg || o.def.clone) continue;
         o.deathT = 0;
         this.dying.push(o);
       }
@@ -274,11 +424,14 @@ export class Renderer {
         p.vz *= 0.6;
       }
     }
-    this.particles = this.particles.filter((p) => p.life > 0);
-    for (const list of [this.tracers, this.bolts, this.rings, this.texts, this.flashes]) for (const t of list) t.life -= dt;
+    let n = 0;
+    for (const p of this.particles) if (p.life > 0) this.particles[n++] = p;
+    this.particles.length = n;
+    for (const list of [this.tracers, this.bolts, this.rings, this.cones, this.texts, this.flashes]) for (const t of list) t.life -= dt;
     this.tracers = this.tracers.filter((t) => t.life > 0);
     this.bolts = this.bolts.filter((t) => t.life > 0);
     this.rings = this.rings.filter((t) => t.life > 0);
+    this.cones = this.cones.filter((t) => t.life > 0);
     this.texts = this.texts.filter((t) => t.life > 0);
     this.flashes = this.flashes.filter((t) => t.life > 0);
     for (let i = this.dying.length - 1; i >= 0; i--) {
@@ -300,8 +453,23 @@ export class Renderer {
     const sx1 = Math.min(this.world.W, wx0 + ww), sz1 = Math.min(this.world.H, wz0 + wh);
     if (sx1 > sx0 && sz1 > sz0) {
       c.imageSmoothingEnabled = true;
-      c.drawImage(this.ground, sx0 * PX, sz0 * PX, (sx1 - sx0) * PX, (sz1 - sz0) * PX, this.sx(sx0), this.sy(sz0), (sx1 - sx0) * u, (sz1 - sz0) * u);
+      const T = TILE / PX; // world units per tile
+      for (let ty = Math.floor(sz0 / T); ty <= Math.min(this.tilesY - 1, Math.floor(sz1 / T)); ty++) {
+        for (let tx = Math.floor(sx0 / T); tx <= Math.min(this.tilesX - 1, Math.floor(sx1 / T)); tx++) {
+          const t = this.tiles[ty * this.tilesX + tx];
+          // snap tile edges to whole pixels so neighbouring tiles meet without seams
+          const X0 = Math.floor(this.sx(tx * T)), Y0 = Math.floor(this.sy(ty * T));
+          const X1 = Math.floor(this.sx(tx * T + t.canvas.width / PX)), Y1 = Math.floor(this.sy(ty * T + t.canvas.height / PX));
+          c.drawImage(t.canvas, X0, Y0, X1 - X0, Y1 - Y0);
+        }
+      }
     }
+    this.spriteBudget = SPRITE_BUILDS_PER_FRAME;
+    if (u !== this.spriteU) {
+      this.spriteU = u;
+      this.zoomedAt = this.time;
+    }
+    if (this.frameNo % 120 === 0) this.evictSprites();
     this.drawGroundLayer(snap, view);
     // depth sorted objects
     const list = [];
@@ -331,7 +499,7 @@ export class Renderer {
     for (const [, t, o] of list) {
       switch (t) {
         case 0:
-          this.drawSolid(o);
+          this.drawSolidCached(o);
           break;
         case 1:
           this.drawStatic(o, snap);
@@ -368,8 +536,71 @@ export class Renderer {
     this.drawOverlayUI(snap, view);
   }
 
+  // ---------------------------------------------------------------- prop sprites
+  // Static props are drawn once into an offscreen sprite and blitted each frame.
+  // While zooming the old sprites are scaled; they are redrawn once zoom settles.
+  drawSolidCached(s) {
+    if (ANIMATED.has(s.kind)) return this.drawSolid(s);
+    const c = this.ctx, u = this.u;
+    const key = s.shareKey || s;
+    let sp = this.sprites.get(key);
+    if ((!sp || (sp.u !== u && this.time - this.zoomedAt > 0.25)) && this.spriteBudget > 0) {
+      this.spriteBudget--;
+      sp = this.buildSprite(s);
+      this.sprites.set(key, sp);
+    }
+    if (!sp) return this.drawSolid(s);
+    sp.used = this.frameNo;
+    const k = u / sp.u;
+    const a = this.fadeFor(s);
+    if (a < 1) c.globalAlpha = a;
+    const X = this.sx(s.x) - sp.ox * k, Y = this.sy(s.z) - sp.oy * k;
+    if (k === 1) c.drawImage(sp.canvas, Math.round(X), Math.round(Y));
+    else c.drawImage(sp.canvas, X, Y, sp.canvas.width * k, sp.canvas.height * k);
+    if (a < 1) c.globalAlpha = 1;
+  }
+
+  buildSprite(s) {
+    const u = this.u;
+    const sc = Math.max(1, s.s || 1);
+    const ox = Math.ceil(1.8 * u * sc), oy = Math.ceil((s.h || 1) * K * u + 3.6 * u * sc);
+    const cv = document.createElement('canvas');
+    cv.width = Math.ceil(ox + s.w * u + 1.8 * u * sc);
+    cv.height = Math.ceil(oy + s.d * u + 1.0 * u);
+    const saved = this.ctx;
+    this.ctx = cv.getContext('2d');
+    this.noFade = true;
+    try {
+      this.drawSolid(s, ox, oy);
+    } finally {
+      this.ctx = saved;
+      this.noFade = false;
+    }
+    return { canvas: cv, ox, oy, u, used: this.frameNo };
+  }
+
+  evictSprites() {
+    for (const [k, sp] of this.sprites) if (this.frameNo - sp.used > 300) this.sprites.delete(k);
+  }
+
+  fadeFor(s) {
+    switch (s.kind) {
+      case 'tree':
+        return this.fade(s.x - 0.8, s.z - 0.8, 2.6, 1.8, 3.4);
+      case 'wall':
+      case 'concrete':
+      case 'lab':
+      case 'silo':
+      case 'tower':
+      case 'building':
+        return this.fade(s.x, s.z, s.w, s.d, s.h);
+    }
+    return 1;
+  }
+
   // occlusion fade: is the local player hidden behind this footprint?
   fade(x, z, w, d, hUnits) {
+    if (this.noFade) return 1;
     const me = this.me;
     if (!me) return 1;
     if (me.z >= z + d - 0.2) return 1;
@@ -409,6 +640,28 @@ export class Renderer {
         c.fill();
         if ((kind === 'fire' || kind === 'napalm') && Math.random() < 0.6) this.emit(x + (Math.random() - 0.5) * r * 1.4, z + (Math.random() - 0.5) * r, 0, 0, 0, 1.8, Math.random() < 0.5 ? '#ff7a2a' : '#ffc84a', 0.45, 0.16, { grow: -0.6, glow: true });
         if (kind === 'acid' && Math.random() < 0.15) this.emit(x + (Math.random() - 0.5) * r, z + (Math.random() - 0.5) * r, 0, 0, 0, 0.6, '#a8ff6a', 0.6, 0.08);
+      }
+    }
+    // boss attack telegraphs: wedges that fill up until the attack lands
+    for (const k of this.cones) {
+      const f = 1 - k.life / k.max;
+      const X = this.sx(k.x), Y = this.sy(k.z);
+      c.beginPath();
+      c.moveTo(X, Y);
+      c.arc(X, Y, k.r * u, k.a - k.h, k.a + k.h);
+      c.closePath();
+      c.fillStyle = S.rgba(k.col, k.fill ? 0.35 * (k.life / k.max) : 0.12);
+      c.fill();
+      c.strokeStyle = S.rgba(k.col, k.fill ? 0.8 * (k.life / k.max) : 0.7);
+      c.lineWidth = u * 0.06;
+      c.stroke();
+      if (!k.fill) {
+        c.beginPath();
+        c.moveTo(X, Y);
+        c.arc(X, Y, k.r * u * f, k.a - k.h, k.a + k.h);
+        c.closePath();
+        c.fillStyle = S.rgba(k.col, 0.25);
+        c.fill();
       }
     }
     // objective zone
@@ -452,9 +705,9 @@ export class Renderer {
     }
   }
 
-  drawSolid(s) {
+  drawSolid(s, X = this.sx(s.x), Y = this.sy(s.z)) {
     const c = this.ctx, u = this.u, th = this.theme;
-    const X = this.sx(s.x), Y = this.sy(s.z), Wp = s.w * u, Dp = s.d * u, Hp = s.h * K * u;
+    const Wp = s.w * u, Dp = s.d * u, Hp = s.h * K * u;
     const t = this.time;
     switch (s.kind) {
       case 'tree': {
@@ -864,14 +1117,6 @@ export class Renderer {
         this.label(o.x, o.z, 2.8, `${pk.name} · ${pk.cost}`, col, 4);
         return;
       }
-      case 'ammo':
-        S.drawBlock(c, X - u * 0.6, Y - u * 0.2, u * 1.2, u * 0.7, u * 0.4, '#6a8a44', '#4a6a30', u, 0.15);
-        for (let i = 0; i < 4; i++) {
-          S.rr(c, X - u * 0.4 + i * u * 0.24, Y - u * 0.85, u * 0.12, u * 0.32, u * 0.06);
-          S.fillStroke(c, '#e8c050', OUT, u * 0.03);
-        }
-        this.label(o.x, o.z, 1.8, 'Ammo Cache', '#d6f08a', 4);
-        return;
       case 'forge': {
         S.shadow(c, X, Y + u * 0.3, u * 0.9, u * 0.25);
         S.drawBlock(c, X - u * 0.8, Y - u * 0.3, u * 1.6, u * 0.8, u * 0.55, '#4a4a56', '#30303a', u, 0.2);
@@ -1136,6 +1381,19 @@ export class Renderer {
     const c = this.ctx, u = this.u;
     const X = this.sx(o.x), Y = this.sy(o.z);
     const def = o.def;
+    if (def.egg) {
+      S.drawEgg(c, X, Y, u, this.time, o.seed, o.flags & 2);
+      if (o.hp < 1) {
+        const bw = u * 0.8, bh = u * 0.12, by = Y - u * 1.1;
+        S.rr(c, X - bw / 2, by, bw, bh, bh / 2);
+        c.fillStyle = 'rgba(20,10,10,0.7)';
+        c.fill();
+        S.rr(c, X - bw / 2, by, bw * Math.max(0, o.hp), bh, bh / 2);
+        c.fillStyle = '#8ad0ff';
+        c.fill();
+      }
+      return;
+    }
     const look = o.look;
     const sc = def.scale;
     const rising = o.st === 0;
@@ -1158,7 +1416,7 @@ export class Renderer {
       ...look, aim: o.a, walk: o.walk, moving: o.moving, time: this.time, seed: o.seed,
       attack: o.st === 2 || o.st === 3, hurt: o.flags & 2, alpha: o.type === 'phantom' ? 0.55 : 1,
     });
-    S.drawZombieExtras(c, o.type, X, Y + yOff, u * sc, this.time, o.a);
+    S.drawZombieExtras(c, def.look || o.type, X, Y + yOff, u * sc, this.time, o.a);
     if (rising) {
       c.restore();
       S.ellipse(c, X, Y, u * 0.5 * sc, u * 0.18 * sc);
@@ -1177,7 +1435,7 @@ export class Renderer {
       }
     }
     // HP bar for regular zombies once damaged
-    if (!rising && o.hp < 1 && !def.boss) {
+    if (!rising && o.hp < 1 && !def.boss && !def.clone) {
       const bw = u * (def.miniboss ? 1.6 : 0.8), bh = u * 0.12;
       const by = Y - u * 1.65 * sc - u * 0.1;
       S.rr(c, X - bw / 2, by, bw, bh, bh / 2);
@@ -1342,8 +1600,22 @@ export class Renderer {
       const X = this.sx(x), Y = this.sy(z) - y * K * u;
       const spec = {
         frag: ['#4a5a3a', 0.15], grenade: ['#5a6a3a', 0.18], ray: [forged ? '#ff6aff' : '#6aff8a', 0.2], bolt: ['#ff5a4a', 0.14],
-        spit: ['#8aff4a', 0.24], rock: ['#8a7058', 0.45], rocket: ['#d8d8d8', 0.18],
+        spit: ['#8aff4a', 0.24], rock: ['#8a7058', 0.45], rocket: ['#d8d8d8', 0.18], hook: ['#c8ccd2', 0.22],
       }[kind] || ['#ffffff', 0.15];
+      if (kind === 'hook') {
+        // chain back to the boss that threw it (its id rides in the last slot)
+        const owner = this.zombies.get(forged);
+        if (owner) {
+          c.strokeStyle = '#5a5048';
+          c.lineWidth = u * 0.08;
+          c.setLineDash([u * 0.18, u * 0.1]);
+          c.beginPath();
+          c.moveTo(this.sx(owner.x), this.sy(owner.z) - u * 1.2);
+          c.lineTo(X, Y);
+          c.stroke();
+          c.setLineDash([]);
+        }
+      }
       S.shadow(this.ctx, X, this.sy(z), u * spec[1], u * spec[1] * 0.4, 0.2);
       if (kind === 'ray' || kind === 'spit' || kind === 'bolt') {
         S.circle(c, X, Y, u * spec[1] * 2);
@@ -1374,7 +1646,7 @@ export class Renderer {
     // lightning
     for (const b of this.bolts) {
       const f = b.life / b.max;
-      for (const [col, w] of [['rgba(120,190,255,' + f + ')', 0.16], ['rgba(255,255,255,' + f + ')', 0.06]]) {
+      for (const [col, w] of [[S.rgba(b.col || '#78beff', f), 0.16], ['rgba(255,255,255,' + f + ')', 0.06]]) {
         c.strokeStyle = col;
         c.lineWidth = u * w;
         c.beginPath();
@@ -1391,36 +1663,53 @@ export class Renderer {
       c.lineWidth = u * (r.w || 0.12);
       c.stroke();
     }
-    // particles
+    // particles: normal ones first, then all glowing ones in a single additive pass
+    const cw = this.canvas.width, ch = this.canvas.height;
+    let glow = 0;
     for (const p of this.particles) {
-      const f = p.life / p.max;
-      const X = this.sx(p.x), Y = this.sy(p.z) - p.h * K * u;
-      const size = p.size * u * (1 + p.grow * (1 - f));
-      if (size <= 0.3) continue;
-      if (p.shape === 'leaf') {
-        c.save();
-        c.translate(X, Y);
-        c.rotate(p.h * 2 + p.x);
-        S.ellipse(c, 0, 0, size, size * 0.5);
-        c.fillStyle = S.rgba(p.col, Math.min(1, f * 2));
-        c.fill();
-        c.restore();
-        continue;
-      }
-      if (p.shape === 'streak') {
-        c.strokeStyle = S.rgba(p.col, 0.5);
-        c.lineWidth = Math.max(1, u * 0.03);
-        c.beginPath();
-        c.moveTo(X, Y);
-        c.lineTo(X - u * 0.1, Y - u * 0.5);
-        c.stroke();
-        continue;
-      }
-      if (p.glow) c.globalCompositeOperation = 'lighter';
-      S.circle(c, X, Y, size);
-      c.fillStyle = S.rgba(p.col, Math.min(1, f * 1.6));
+      if (p.glow) glow++;
+      else this.drawParticle(p, cw, ch);
+    }
+    if (glow) {
+      c.globalCompositeOperation = 'lighter';
+      for (const p of this.particles) if (p.glow) this.drawParticle(p, cw, ch);
+      c.globalCompositeOperation = 'source-over';
+    }
+    c.globalAlpha = 1;
+  }
+
+  drawParticle(p, cw, ch) {
+    const c = this.ctx, u = this.u;
+    const f = p.life / p.max;
+    const X = this.sx(p.x), Y = this.sy(p.z) - p.h * K * u;
+    const size = p.size * u * (1 + p.grow * (1 - f));
+    if (size <= 0.3 || X < -size || Y < -size || X > cw + size || Y > ch + size) return;
+    c.fillStyle = p.col;
+    if (p.shape === 'leaf') {
+      c.globalAlpha = Math.min(1, f * 2);
+      c.save();
+      c.translate(X, Y);
+      c.rotate(p.h * 2 + p.x);
+      S.ellipse(c, 0, 0, size, size * 0.5);
       c.fill();
-      if (p.glow) c.globalCompositeOperation = 'source-over';
+      c.restore();
+      return;
+    }
+    if (p.shape === 'streak') {
+      c.globalAlpha = 0.5;
+      c.strokeStyle = p.col;
+      c.lineWidth = Math.max(1, u * 0.03);
+      c.beginPath();
+      c.moveTo(X, Y);
+      c.lineTo(X - u * 0.1, Y - u * 0.5);
+      c.stroke();
+      return;
+    }
+    c.globalAlpha = Math.min(1, f * 1.6);
+    if (size < 2.5) c.fillRect(X - size, Y - size, size * 2, size * 2);
+    else {
+      S.circle(c, X, Y, size);
+      c.fill();
     }
   }
 
@@ -1438,8 +1727,10 @@ export class Renderer {
     for (const [, kind, x, z, r] of snap.H) if (kind === 'fire' || kind === 'napalm' || kind === 'heal') lights.push([x, z, r * 2.5, kind === 'heal' ? '#7fffb0' : '#ff8a3a', 0.35]);
     for (const o of this.zombies.values()) if (o.type === 'burner' || o.flags & 1) lights.push([o.x, o.z, 3, '#ff8a3a', 0.3]);
     const vis = lights.filter(([x, z, r]) => Math.abs(x - this.cam.x) < this.canvas.width / u / 2 + r && Math.abs(z - this.cam.z) < this.canvas.height / u / 2 + r);
+    // darkness with holes cut by lights, drawn at low resolution and stretched
+    // (the vignette is a static CSS overlay, see #game::after)
     if (th.dark > 0) {
-      const L = this.lctx, lw = this.light.width, lh = this.light.height;
+      const L = this.lctx, lw = this.light.width, lh = this.light.height, ls = lw / this.canvas.width;
       L.globalCompositeOperation = 'source-over';
       L.clearRect(0, 0, lw, lh);
       L.globalAlpha = th.dark;
@@ -1447,37 +1738,58 @@ export class Renderer {
       L.fillRect(0, 0, lw, lh);
       L.globalAlpha = 1;
       L.globalCompositeOperation = 'destination-out';
+      const hole = this.glowSprite('hole');
       for (const [x, z, r] of vis) {
-        const X = this.sx(x) / 2, Y = (this.sy(z) - u * 0.5) / 2, R = (r * u) / 2;
-        const g = L.createRadialGradient(X, Y, 0, X, Y, R);
-        g.addColorStop(0, 'rgba(0,0,0,1)');
-        g.addColorStop(0.5, 'rgba(0,0,0,0.6)');
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-        L.fillStyle = g;
-        L.fillRect(X - R, Y - R, R * 2, R * 2);
+        const X = this.sx(x) * ls, Y = (this.sy(z) - u * 0.5) * ls, R = r * u * ls;
+        L.drawImage(hole, X - R, Y - R, R * 2, R * 2);
       }
-      c.drawImage(this.light, 0, 0, this.canvas.width, this.canvas.height);
+      L.globalCompositeOperation = 'source-over';
     }
+    this.light.style.display = th.dark > 0 ? '' : 'none';
     // warm additive glow
     c.globalCompositeOperation = 'lighter';
     for (const [x, z, r, col, a] of vis) {
       if (a <= 0.26 && col === '#ffe8c0') continue;
       const X = this.sx(x), Y = this.sy(z) - u * 0.5, R = r * u * 0.6;
-      const g = c.createRadialGradient(X, Y, 0, X, Y, R);
-      g.addColorStop(0, S.rgba(col, a * (th.dark > 0 ? 0.55 : 0.3)));
-      g.addColorStop(1, S.rgba(col, 0));
-      c.fillStyle = g;
-      c.fillRect(X - R, Y - R, R * 2, R * 2);
+      c.globalAlpha = Math.min(1, a * (th.dark > 0 ? 0.55 : 0.3));
+      c.drawImage(this.glowSprite(col), X - R, Y - R, R * 2, R * 2);
     }
+    c.globalAlpha = 1;
     c.globalCompositeOperation = 'source-over';
     this.flashes = this.flashes.filter((f) => !f.static);
-    // soft vignette
-    const cw = this.canvas.width, ch = this.canvas.height;
-    const g = c.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * 0.35, cw / 2, ch / 2, Math.max(cw, ch) * 0.75);
-    g.addColorStop(0, 'rgba(0,0,0,0)');
-    g.addColorStop(1, 'rgba(10,8,20,0.45)');
-    c.fillStyle = g;
-    c.fillRect(0, 0, cw, ch);
+  }
+
+  // Radial gradients are pre-rendered once into small sprites and stretched,
+  // instead of building a new gradient for every light every frame.
+  glowSprite(kind) {
+    let cv = this.glowSprites.get(kind);
+    if (cv) return cv;
+    const N = 128;
+    cv = document.createElement('canvas');
+    cv.width = cv.height = N;
+    const g = cv.getContext('2d');
+    {
+      const gr = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
+      if (kind === 'hole') {
+        gr.addColorStop(0, 'rgba(0,0,0,1)');
+        gr.addColorStop(0.5, 'rgba(0,0,0,0.6)');
+        gr.addColorStop(1, 'rgba(0,0,0,0)');
+      } else {
+        gr.addColorStop(0, S.rgba(kind, 1));
+        gr.addColorStop(1, S.rgba(kind, 0));
+      }
+      g.fillStyle = gr;
+      g.fillRect(0, 0, N, N);
+    }
+    this.glowSprites.set(kind, cv);
+    return cv;
+  }
+
+  // clear the darkness overlay behind UI drawn on the game canvas (screen px rect)
+  unshade(x, y, w, h) {
+    if (this.theme.dark <= 0) return;
+    const ls = this.light.width / this.canvas.width;
+    this.lctx.clearRect(Math.floor(x * ls), Math.floor(y * ls), Math.ceil(w * ls) + 2, Math.ceil(h * ls) + 2);
   }
 
   // label above a world point, only when the local player is within `near` units
@@ -1505,7 +1817,14 @@ export class Renderer {
     this.exclLabel = null;
     for (const [x, z, h, text, col, hpFrac] of labels) {
       const X = this.sx(x), Y = this.sy(z) - h * u * K * 1.25;
-      const w = c.measureText(text).width + fs;
+      const wk = fs + '|' + text;
+      let tw = this.textW.get(wk);
+      if (tw === undefined) {
+        if (this.textW.size > 500) this.textW.clear();
+        this.textW.set(wk, (tw = c.measureText(text).width));
+      }
+      const w = tw + fs;
+      this.unshade(X - w / 2, Y - fs * 0.8, w, fs * 1.6);
       S.rr(c, X - w / 2, Y - fs * 0.8, w, fs * 1.6, fs * 0.8);
       c.fillStyle = 'rgba(28,22,30,0.72)';
       c.fill();
@@ -1525,6 +1844,7 @@ export class Renderer {
       const X = this.sx(t.x), Y = this.sy(t.z) - (t.h + rise) * u * K * 1.4;
       const pop = f > 0.85 ? 1 + (f - 0.85) * 3 : 1;
       c.font = `800 ${t.size * u * pop}px Fredoka, Segoe UI, sans-serif`;
+      this.unshade(X - t.size * u * t.text.length * 0.35, Y - t.size * u * 0.6, t.size * u * t.text.length * 0.7, t.size * u * 1.2);
       c.globalAlpha = Math.min(1, f * 2.5);
       c.lineWidth = Math.max(2, u * 0.08);
       c.strokeStyle = 'rgba(30,20,25,0.9)';
@@ -1545,6 +1865,7 @@ export class Renderer {
       if (onScreen) {
         if (type !== 2) {
           const by = Y - u * 2.4 + Math.sin(this.time * 5) * u * 0.18;
+          this.unshade(X - u * 0.4, by - u * 0.4, u * 0.8, u * 0.6);
           c.beginPath();
           c.moveTo(X - u * 0.3, by - u * 0.3);
           c.lineTo(X + u * 0.3, by - u * 0.3);
@@ -1558,6 +1879,7 @@ export class Renderer {
         // keep arrows clear of the bottom HUD panels
         const ex = Math.max(m, Math.min(cw - m, cw / 2 + Math.cos(a) * cw)), ey = Math.max(m, Math.min(ch - 150 * this.dpr, ch / 2 + Math.sin(a) * ch));
         c.save();
+        this.unshade(ex - u * 1.5, ey - u * 1.5, u * 3, u * 3);
         c.translate(ex, ey);
         c.rotate(a);
         c.beginPath();
@@ -1607,10 +1929,21 @@ export class Renderer {
       case 'dmg':
         this.text(e.x, e.z, 1.6, String(e.d), e.c ? '#ffd23a' : '#ffffff', e.c ? 0.6 : 0.42, 0.8);
         break;
-      case 'die':
+      case 'die': {
+        const zd = ZOMBIES[ZTYPES[e.ty]];
+        if (zd && zd.egg) {
+          this.burst(e.x, e.z, 0.5, 20, ['#bcdcea', '#8ab0c8'], 4, 0.6, 0.12, { g: 12, up: 1 });
+          this.splat(e.x, e.z, 0.5, '#6a8aa8', 0.4);
+          break;
+        }
+        if (zd && zd.clone) {
+          this.burst(e.x, e.z, 1, 30, ['#b07aff', '#6a2ad0', '#ff3a3a'], 3, 0.6, 0.14, { glow: true });
+          break;
+        }
         this.burst(e.x, e.z, 0.8, 12, ['#a01818', '#6a0e0e'], 4, 0.6, 0.1, { g: 12, up: 1 });
         this.splat(e.x, e.z, 0.4 + Math.random() * 0.3, '#6a1010', 0.45);
         break;
+      }
       case 'boom': {
         this.rings.push({ x: e.x, z: e.z, r0: 0.3, r1: e.r * 1.1, col: '#ffb050', life: 0.35, max: 0.35, w: 0.2, flat: true });
         this.burst(e.x, e.z, 0.4, 30, ['#ffb030', '#ff6a1a', '#ffe070'], 7 * (e.r / 3), 0.55, 0.28, { up: 0.6, drag: 3, grow: 1, glow: true });
@@ -1653,8 +1986,56 @@ export class Renderer {
         this.burst(e.x, e.z, 0.2, 30, ['#a08a64', '#7a6a4a'], 6, 0.8, 0.22, { up: 0.5, drag: 2, grow: 1.4, spread: 1 });
         this.shake = Math.min(1.5, this.shake + Math.max(0, 1 - camD(e.x, e.z) / 25) * 0.9);
         break;
-      case 'tele':
+      case 'tele': {
         this.rings.push({ x: e.x, z: e.z, r0: 3, r1: 0.5, col: '#ff4a3a', life: 0.7, max: 0.7, flat: true });
+        const shout = BOSS_SHOUTS[e.a];
+        if (shout) this.text(e.x, e.z, 4.5, shout, '#ff8a5a', 0.7, 1.4);
+        if (e.a === 'sweep') this.cones.push({ x: e.x, z: e.z, a: e.ang, r: 5.2, h: 1.15, col: '#ff4a3a', life: e.t, max: e.t });
+        if (e.a === 'bile') this.cones.push({ x: e.x, z: e.z, a: e.ang, r: 11, h: 0.16, col: '#8aff4a', life: e.t, max: e.t });
+        break;
+      }
+      case 'sweep':
+        this.cones.push({ x: e.x, z: e.z, a: e.a, r: e.r, h: e.h, col: '#e8eef2', life: 0.3, max: 0.3, fill: true });
+        for (let i = 0; i < 16; i++) {
+          const a = e.a - e.h + (i / 15) * e.h * 2;
+          this.emit(e.x + Math.cos(a) * e.r * 0.9, e.z + Math.sin(a) * e.r * 0.9, 1, Math.cos(a) * 2, Math.sin(a) * 2, 0, '#f0f4f8', 0.25, 0.14);
+        }
+        this.shake = Math.min(1.5, this.shake + Math.max(0, 1 - camD(e.x, e.z) / 25) * 0.5);
+        break;
+      case 'bile':
+        for (let i = 0; i < 40; i++) {
+          const d = Math.random() * e.d, a = e.a + (Math.random() - 0.5) * 0.3;
+          this.emit(e.x + Math.cos(a) * d, e.z + Math.sin(a) * d, 1.2, Math.cos(a) * 3, Math.sin(a) * 3, 1.5, Math.random() < 0.5 ? '#8aff4a' : '#c8ff6a', 0.6, 0.18, { g: 8, grow: 0.5 });
+        }
+        break;
+      case 'devour':
+        for (let i = 0; i < 14; i++) {
+          const t = Math.random();
+          this.emit(e.x + (e.x2 - e.x) * t, e.z + (e.z2 - e.z) * t, 1, (e.x2 - e.x) * 1.5, (e.z2 - e.z) * 1.5, 0.5, '#a01818', 0.5, 0.14);
+        }
+        this.text(e.x2, e.z2, 3.6, '+HP', '#7aff7a', 0.55, 0.9);
+        break;
+      case 'rally':
+        this.rings.push({ x: e.x, z: e.z, r0: 0.5, r1: e.r, col: '#ffd65a', life: 0.8, max: 0.8, flat: true, w: 0.18 });
+        break;
+      case 'hatch':
+        this.burst(e.x, e.z, 0.5, 24, ['#bcdcea', '#8ab0c8', '#e8f4ff'], 4, 0.7, 0.14, { g: 10, up: 1 });
+        this.splat(e.x, e.z, 0.6, '#6a8aa8', 0.4);
+        break;
+      case 'beam': {
+        const pts = [];
+        for (let k = 0; k <= 6; k++) {
+          const t = k / 6, j = k === 0 || k === 6 ? 0 : 0.35;
+          pts.push([e.x + (e.x2 - e.x) * t + (Math.random() - 0.5) * j, e.z + (e.z2 - e.z) * t + (Math.random() - 0.5) * j]);
+        }
+        this.bolts.push({ pts, life: 0.25, max: 0.25, col: '#ff3030' });
+        this.burst(e.x2, e.z2, 1, 4, ['#ff3030', '#ff8080'], 2, 0.4, 0.08, { glow: true });
+        break;
+      }
+      case 'yank':
+        this.bolts.push({ pts: [[e.zx, e.zz], [e.x2, e.z2], [e.x, e.z]], life: 0.3, max: 0.3, col: '#a0a4aa' });
+        this.burst(e.x, e.z, 0.4, 14, ['#a08a64', '#7a6a4a'], 3, 0.6, 0.12, { up: 0.5, drag: 2 });
+        this.shake = Math.min(1.5, this.shake + Math.max(0, 1 - camD(e.x2, e.z2) / 20) * 0.5);
         break;
       case 'blink':
         this.burst(e.x, e.z, 1, e.big ? 36 : 16, ['#b07aff', '#6a2ad0'], 3, 0.6, 0.14, { glow: true });
@@ -1704,7 +2085,7 @@ export class Renderer {
   ambient(dt) {
     const kind = this.theme.particles;
     const cw = this.canvas.width / this.u, ch = this.canvas.height / this.u;
-    const rate = { rain: 180, snow: 70, embers: 22, dust: 14, leaves: 6 }[kind] || 0;
+    const rate = ({ rain: 180, snow: 70, embers: 22, dust: 14, leaves: 6 }[kind] || 0) * this.quality;
     let n = rate * dt;
     while (n > 0) {
       if (n < 1 && Math.random() > n) break;
