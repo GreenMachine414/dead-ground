@@ -19,8 +19,8 @@ export class Hud {
       <div class="team"></div>
       <div class="msg"><div class="msg-main"></div><div class="msg-sub"></div></div>
       <div class="notes"></div>
+      <div class="levelup"><div class="lu-title">Choose an upgrade: press 1, 2 or 3 <span class="lu-more"></span></div><div class="lu-cards"></div></div>
       <div class="prompt"><div class="prompt-text"></div><div class="prompt-bar"><div></div></div></div>
-      <div class="levelup"><div class="lu-title">Upgrade: press 1, 2 or 3 <span class="lu-more"></span></div><div class="lu-cards"></div></div>
       <div class="player card">
         <div class="pts-row"><span class="coin">●</span><span class="pts"></span><span class="pts-pop"></span></div>
         <div class="bar hp"><div class="fill"></div><span></span></div>
@@ -113,6 +113,28 @@ export class Hud {
       g.beginPath();
       g.arc(s.x * S, s.z * S, 5, 0, Math.PI * 2);
       g.fill();
+    }
+    g.lineWidth = 2;
+    g.strokeStyle = '#ffffff';
+    const shop = world.spots.boonshop;
+    if (shop) {
+      // purple diamond
+      g.beginPath();
+      g.moveTo(shop.x * S, shop.z * S - 8);
+      g.lineTo(shop.x * S + 6, shop.z * S);
+      g.lineTo(shop.x * S, shop.z * S + 8);
+      g.lineTo(shop.x * S - 6, shop.z * S);
+      g.closePath();
+      g.fillStyle = '#a070f0';
+      g.fill();
+      g.stroke();
+    }
+    const forge = world.spots.forge;
+    if (forge) {
+      // orange square
+      g.fillStyle = '#ff8a3a';
+      g.fillRect(forge.x * S - 5, forge.z * S - 5, 10, 10);
+      g.strokeRect(forge.x * S - 5, forge.z * S - 5, 10, 10);
     }
     this.mapImg = c;
     this.mapS = S;
@@ -339,7 +361,7 @@ export class Hud {
     });
     for (const it of snap.I) {
       const [, kind, x, z, , rar] = it;
-      dot(x, z, kind === 'weapon' ? 3 : 3.5, kind === 'weapon' ? RARITY[rar].color : kind === 'power' ? '#7aff7a' : kind === 'item' ? '#ffd65a' : '#c8ffb0', true);
+      dot(x, z, kind === 'weapon' ? 3 : 3.5, kind === 'weapon' ? RARITY[rar].color : kind === 'power' ? '#7aff7a' : kind === 'item' || kind === 'supply' ? '#ffd65a' : '#c8ffb0', true);
     }
     for (const z of snap.Z) if (z[6] !== 0) dot(z[2], z[3], 2.4, '#ff4a3a');
     if (snap.O.zone) {

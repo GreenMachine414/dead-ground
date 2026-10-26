@@ -37,8 +37,8 @@ export function measureRefresh() {
   requestAnimationFrame(tick);
 }
 const OUT = 'rgba(40,30,30,0.85)';
-// the upgrade machine is drawn like a perk machine (price is per player, so no cost label)
-const SHOP = { name: 'Upgrade Machine', color: 0xa070f0 };
+// colours of the three upgrade cards on the Upgrade Machine's screen
+const SHOP_CARDS = ['#f0a83a', '#6fd36a', '#5ab8e8'];
 // floating callouts over a boss when it winds up a signature move
 const BOSS_SHOUTS = {
   sweep: 'SCYTHE!', hook: 'HOOK!', bile: 'BILE!', devour: 'FEAST!', barrage: 'ARTILLERY!', rally: 'RALLY!',
@@ -191,7 +191,7 @@ export class Renderer {
     const sp = world.spots;
     for (const s of sp.perk) this.statics.push({ k: 'perk', x: s.x, z: s.z - 0.7, perk: s.perk });
     if (sp.forge) this.statics.push({ k: 'forge', x: sp.forge.x, z: sp.forge.z - 0.8 });
-    if (sp.boonshop) this.statics.push({ k: 'perk', x: sp.boonshop.x, z: sp.boonshop.z - 0.7, shop: true });
+    if (sp.boonshop) this.statics.push({ k: 'shop', x: sp.boonshop.x, z: sp.boonshop.z - 0.7 });
     const stationNames = new Set();
     for (const st of map.story.steps) if (st.type === 'activate') st.spots.forEach((n) => stationNames.add(n));
     for (const n of stationNames) {
@@ -625,8 +625,8 @@ export class Renderer {
         c.stroke();
         continue;
       }
-      const col = { acid: '#7ee04a', fire: '#ff7a2a', heal: '#5ef0a0', napalm: '#ff6a2a', supply: '#ffd65a' }[kind] || '#ffffff';
-      if (kind === 'heal' || kind === 'supply') {
+      const col = { acid: '#7ee04a', fire: '#ff7a2a', heal: '#5ef0a0', napalm: '#ff6a2a' }[kind] || '#ffffff';
+      if (kind === 'heal') {
         S.circle(c, X, Y, R);
         c.fillStyle = S.rgba(col, 0.15 * fade);
         c.fill();
@@ -1107,7 +1107,7 @@ export class Renderer {
     const X = this.sx(o.x), Y = this.sy(o.z);
     switch (o.k) {
       case 'perk': {
-        const pk = o.shop ? SHOP : PERKS[o.perk];
+        const pk = PERKS[o.perk];
         const col = S.hex(pk.color);
         S.shadow(c, X, Y + u * 0.3, u * 0.6, u * 0.2);
         S.rr(c, X - u * 0.5, Y - u * 1.4, u * 1.0, u * 1.75, u * 0.25);
@@ -1124,7 +1124,33 @@ export class Renderer {
         c.fillStyle = 'rgba(0,0,0,0.4)';
         c.fill();
         this.glowAt(o.x, o.z, 2.5, col, 0.25);
-        this.label(o.x, o.z, 2.8, o.shop ? pk.name : `${pk.name} · ${pk.cost}`, col, 4);
+        this.label(o.x, o.z, 2.8, `${pk.name} · ${pk.cost}`, col, 4);
+        return;
+      }
+      case 'shop': {
+        // Upgrade Machine: wide purple cabinet, a screen of three upgrade cards
+        // lighting in turn, and a floating crystal so it reads differently from perks
+        S.shadow(c, X, Y + u * 0.35, u * 0.9, u * 0.26);
+        S.drawBlock(c, X - u * 0.75, Y - u * 0.2, u * 1.5, u * 0.6, u * 1.3, '#7a52b8', '#4c2f80', u, 0.2);
+        S.rr(c, X - u * 0.6, Y - u * 0.82, u * 1.2, u * 0.56, u * 0.1);
+        c.fillStyle = '#1c1430';
+        c.fill();
+        const lit = Math.floor(t * 2.5) % 3;
+        for (let i = 0; i < 3; i++) {
+          S.rr(c, X - u * 0.52 + i * u * 0.36, Y - u * 0.76, u * 0.3, u * 0.44, u * 0.05);
+          c.fillStyle = i === lit ? SHOP_CARDS[i] : '#3a2a5a';
+          c.fill();
+        }
+        const fy = Y - u * 2.15 + Math.sin(t * 2.5) * u * 0.12;
+        c.beginPath();
+        c.moveTo(X, fy - u * 0.3);
+        c.lineTo(X + u * 0.22, fy);
+        c.lineTo(X, fy + u * 0.3);
+        c.lineTo(X - u * 0.22, fy);
+        c.closePath();
+        S.fillStroke(c, '#d2a8ff', OUT, u * 0.045);
+        this.glowAt(o.x, o.z - 1, 2.8, '#b07cff', 0.4);
+        this.label(o.x, o.z, 4.1, 'Upgrade Machine', '#d2a8ff', 4);
         return;
       }
       case 'forge': {
@@ -1533,6 +1559,19 @@ export class Renderer {
     } else if (kind === 'grenade') {
       S.circle(c, X, y, u * 0.18);
       S.fillStroke(c, '#5a7a3a', OUT, u * 0.04);
+    } else if (kind === 'supply') {
+      // Mags' supply bag: olive duffel with an ammo stripe
+      this.glowAt(x, z, 1.6, '#ffd65a', 0.35);
+      S.rr(c, X - u * 0.42, y - u * 0.28, u * 0.84, u * 0.5, u * 0.2);
+      S.fillStroke(c, '#7a8a4a', OUT, u * 0.045);
+      c.fillStyle = '#f2d050';
+      c.fillRect(X - u * 0.07, y - u * 0.28, u * 0.14, u * 0.5);
+      c.strokeStyle = OUT;
+      c.lineWidth = u * 0.06;
+      c.beginPath();
+      c.arc(X, y - u * 0.28, u * 0.18, Math.PI, 0);
+      c.stroke();
+      this.label(x, z, 1.5, 'Supply Bag', '#ffd65a', 6);
     } else if (kind === 'health') {
       S.rr(c, X - u * 0.24, y - u * 0.2, u * 0.48, u * 0.4, u * 0.08);
       S.fillStroke(c, '#f4f4f0', OUT, u * 0.04);

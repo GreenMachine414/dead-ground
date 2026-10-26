@@ -157,25 +157,29 @@ for (let m = 1; m <= 5; m++) {
   check('overcharge boosts ability damage', d2 > d0 * 1.25, `${Math.round(d0)} -> ${Math.round(d2)}`);
 }
 
-// 9) Mags restocks allies and her zone keeps refilling
+// 9) Mags tosses a supply bag each teammate can grab once
 {
   const g = new Game({ mapId: 1, mode: 'endless', seed: 5, unlockedMap: 5, players: [
     { id: 0, name: 'M', char: 'mags', level: 5 }, { id: 1, name: 'A', char: 'brick', level: 1 }] });
   g.wave = 5;
   g.waveT = 1e9;
   const [m, a] = g.players;
-  a.x = m.x + 1;
-  a.z = m.z;
   const w = a.weapons[0];
   const max = g.wstat(a, w).reserve;
   w.reserve = 0;
   w.mag = 0;
   a.grenades = 0;
-  run(g, 0.05, (q) => idle(q, { acts: q === m ? { ability: true } : {} }));
-  check('supply drop restocks ally', w.reserve === max && w.mag === g.wstat(a, w).mag && a.grenades === 1, `reserve ${w.reserve}/${max}`);
+  a.x = m.x + 20; // ally is away when the bags drop
+  run(g, 0.05, (q) => idle(q, { ax: m.x + 3, az: m.z, acts: q === m ? { ability: true } : {} }));
+  const bags = g.pickups.filter((k) => k.kind === 'supply');
+  check('level 5 drops two supply bags', bags.length === 2, `bags=${bags.length}`);
+  a.x = bags[0].x;
+  a.z = bags[0].z;
+  run(g, 0.05);
+  check('ally restocks from the bag', w.reserve === max && w.mag === g.wstat(a, w).mag && a.grenades === 1, `reserve ${w.reserve}/${max}`);
   w.reserve = 0;
-  run(g, 2);
-  check('supply zone keeps refilling', w.reserve > 0 && Number.isInteger(w.reserve), `reserve ${w.reserve}`);
+  run(g, 0.5);
+  check('each ally grabs a bag only once', w.reserve === 0);
   check('Mags carries +25% reserve', g.wstat(m, m.weapons[0]).reserve === Math.round(g.wstat(a, a.weapons[0]).reserve * 1.25));
 }
 

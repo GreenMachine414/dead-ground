@@ -88,22 +88,35 @@ export async function runSmoke(app) {
       report.fps[m.id] = Math.round((frames / (performance.now() - t0)) * 1000);
       await shot(`map${m.id}`);
       check(`map${m.id}-zombies-spawned`, g.totalKills + g.zombies.length > 0);
+      if (m.id === 3) {
+        // Mags tosses a supply bag toward the cursor
+        p.abilityCd = 0;
+        const sample = s.input.sample;
+        s.input.sample = () => ({ ...sample(), ax: p.x + 4, az: p.z + 1, acts: { ability: true } });
+        await wait(100);
+        s.input.sample = sample;
+        await wait(500);
+        await shot('map3-supply-bag');
+        check('supply-bag-dropped', g.pickups.some((k) => k.kind === 'supply'));
+      }
       if (m.id === 2) {
         // the upgrade machine and its prompt
         const shop = g.world.spots.boonshop;
         p.x = shop.x;
-        p.z = shop.z + 0.5;
+        p.z = shop.z + 3.5;
         await wait(400);
         await shot('map2-upgrade-machine');
+        p.z = shop.z + 0.5;
+        await wait(200);
         check('upgrade-machine-prompt', /Upgrade Machine/.test(p.prompt));
       }
       if (m.id === 1) {
         // level-up cards
         autoPick = false;
-        g.gainXp(p, 400);
+        p.choices.push(g.rollChoices(p)); // as if bought from the Upgrade Machine
         await wait(500);
-        await shot('map1-levelup');
-        check('levelup-pauses-solo', p.choices.length > 0);
+        await shot('map1-upgrade-pick');
+        check('upgrade-pick-pauses-solo', p.choices.length > 0);
         autoPick = true;
         await wait(300);
         // walk up to a container and search it

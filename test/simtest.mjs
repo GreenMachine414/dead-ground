@@ -114,17 +114,17 @@ for (const m of MAPS) {
   console.log(`${ok ? 'PASS' : 'FAIL'} map${m.id} loot: containers=${g.containers.length} searched=${searched} unreachable=${unreachable.map((c) => c.kind + '@' + c.x + ',' + c.z).join(' ') || 0} weapons=${weapons} rarity=${rar.join('/')}`);
 }
 
-// XP + level up choices
+// XP levels no longer grant picks; picking from a (machine) choice applies the upgrade
 {
   const g = new Game({ mapId: 1, mode: 'story', seed: 4, players: [{ id: 0, char: 'rook', level: 1 }] });
   const p = g.players[0];
   g.gainXp(p, 1000);
   const ranks = p.rank, pending = p.choices.length;
   const hp0 = p.maxHp;
-  p.choices[0] = ['vigor', 'power', 'haste'];
+  p.choices.push(['vigor', 'power', 'haste']);
   g.setInput(0, { mx: 0, mz: 0, ax: 0, az: 0, acts: { pick: 1 } });
   g.update(DT);
-  const ok = ranks > 3 && pending === ranks - 1 && p.boons.vigor === 1 && p.maxHp === hp0 + 20 && p.choices.length === pending - 1;
+  const ok = ranks > 3 && pending === 0 && p.boons.vigor === 1 && p.maxHp === hp0 + 20 && p.choices.length === 0;
   if (!ok) failures++;
   console.log(`${ok ? 'PASS' : 'FAIL'} xp/level-up (rank=${ranks} pending=${pending} maxHp ${hp0}->${p.maxHp})`);
 }

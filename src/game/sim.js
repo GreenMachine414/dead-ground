@@ -24,7 +24,7 @@ const NO_ARMOR = new Set(['explosive', 'gunblast', 'ability', 'chain']);
 // damage kinds that count as kills with the gun in hand (for the second forge level)
 const GUN_KILLS = new Set(['bullet', 'fire', 'burn', 'chain', 'gunblast']);
 // ability stats scaled by the Overcharge upgrade
-const OVERCHARGE_STATS = ['wallHp', 'spikes', 'damage', 'hp', 'duration', 'heal', 'zoneHeal', 'zoneDamage', 'restock', 'zone'];
+const OVERCHARGE_STATS = ['wallHp', 'spikes', 'damage', 'hp', 'duration', 'heal', 'zoneHeal', 'zoneDamage', 'restock', 'life'];
 const ZSTATE = { rise: 0, move: 1, attack: 2, windup: 3, charge: 4, leap: 5, stun: 6, drain: 2 };
 const BOX_COST = 950;
 const MAX_GRENADES = 4;
@@ -237,7 +237,6 @@ export class Game {
     while (p.xp >= xpForLevel(p.rank)) {
       p.xp -= xpForLevel(p.rank);
       p.rank++;
-      p.choices.push(this.rollChoices(p));
       this.emit({ k: 'levelup', p: p.id, r: p.rank, x: p.x, z: p.z });
     }
   }
@@ -691,7 +690,7 @@ export class Game {
     let ok = true;
     if (p.char === 'sparks') ok = this.placeTurret(p, st, scale);
     else if (p.char === 'doc') this.healField(p, st);
-    else if (p.char === 'mags') this.supplyDrop(p, st);
+    else if (p.char === 'mags') this.supplyDrop(p, st, ax, az);
     else if (p.char === 'rook') this.airstrike(p, st, scale, ax, az);
     else if (p.char === 'volt') {
       this.chainLightning(p.id, p.x, p.z, p.ang, st.damage * scale, st.chains, st.stun, 16);
@@ -810,16 +809,37 @@ export class Game {
     this.emit({ k: 'heal', x: p.x, z: p.z, r: st.radius });
   }
 
-  // Mags: restock allies in range now; higher levels leave a zone that keeps refilling
-  supplyDrop(p, st) {
-    for (const q of this.players) {
-      if (q.state !== 'alive' || Math.hypot(q.x - p.x, q.z - p.z) > st.radius) continue;
-      this.restock(q, Math.min(1, st.restock), st.mags);
-      if (st.grenades) q.grenades = Math.min(this.maxGrenades(q), q.grenades + st.grenades);
-      this.emit({ k: 'float', x: q.x, z: q.z, s: '+Ammo', p: q.id });
+  // Mags: toss a supply bag toward the cursor (a second one lands at her feet at level 4+)
+  supplyDrop(p, st, ax, az) {
+    let dx = ax - p.x, dz = az - p.z;
+    const d = Math.hypot(dx, dz) || 1, dd = Math.min(7, d);
+    let x = p.x + (dx / d) * dd, z = p.z + (dz / d) * dd;
+    if (circleBlocked(this.world, this.sgrid, x, z, 0.4) || !hasLOS(this.world, p.x, p.z, x, z)) {
+      x = p.x;
+      z = p.z;
     }
-    if (st.zone) this.hazards.push({ id: this.nextId++, kind: 'supply', x: p.x, z: p.z, r: 4, t: st.zone, tick: 0.5 });
-    this.emit({ k: 'heal', x: p.x, z: p.z, r: st.radius, c: '#ffd65a' });
+    const spots = st.bags > 1 ? [[x, z], [p.x, p.z]] : [[x, z]];
+    for (const [bx, bz] of spots) {
+      this.pickups.push({
+        id: this.nextId++, kind: 'supply', x: bx, z: bz, t: st.life, took: [],
+        restock: Math.min(1, st.restock), grenades: st.grenades, mags: st.mags,
+      });
+      this.emit({ k: 'heal', x: bx, z: bz, r: 1.6, c: '#ffd65a' });
+    }
+    this.emit({ k: 'sfx', s: 'throw', x: p.x, z: p.z });
+  }
+
+  // each living player can take from a supply bag once; it's gone when all have
+  grabSupply(k) {
+    for (const p of this.players) {
+      if (p.state !== 'alive' || k.took.includes(p.id) || dist2(p.x, p.z, k.x, k.z) > 1.3 * 1.3) continue;
+      k.took.push(p.id);
+      this.restock(p, k.restock, k.mags);
+      if (k.grenades) p.grenades = Math.min(this.maxGrenades(p), p.grenades + k.grenades);
+      this.emit({ k: 'sfx', s: 'pickup', x: k.x, z: k.z });
+      this.emit({ k: 'float', x: k.x, z: k.z, s: '+Ammo', p: p.id });
+    }
+    if (this.players.every((p) => p.state !== 'alive' || k.took.includes(p.id))) this.pickups.splice(this.pickups.indexOf(k), 1);
   }
 
   // add `frac` of each weapon's max reserve (and optionally top up magazines)
@@ -1301,6 +1321,10 @@ export class Game {
         }
       }
       if (k.kind === 'weapon') continue;
+      if (k.kind === 'supply') {
+        this.grabSupply(k);
+        continue;
+      }
       const p = this.players.find((q) => q.state === 'alive' && dist2(q.x, q.z, k.x, k.z) < 1.3 * 1.3);
       if (!p) continue;
       this.pickups.splice(this.pickups.indexOf(k), 1);
@@ -2150,13 +2174,6 @@ export class Game {
       } else if (h.kind === 'heal') {
         for (const p of this.players) if (p.state === 'alive' && dist2(p.x, p.z, h.x, h.z) < h.r * h.r) p.hp = Math.min(p.maxHp, p.hp + h.heal * dt);
         if (h.dmg) for (const z of [...this.zombies]) if (dist2(z.x, z.z, h.x, h.z) < h.r * h.r) this.damageZombie(z, h.dmg * dt, h.pid, 'zone');
-      } else if (h.kind === 'supply') {
-        // refills in half-second steps so reserve counts stay whole numbers
-        h.tick -= dt;
-        if (h.tick <= 0) {
-          h.tick = 0.5;
-          for (const p of this.players) if (p.state === 'alive' && dist2(p.x, p.z, h.x, h.z) < h.r * h.r) this.restock(p, 0.05, false);
-        }
       } else if (h.kind === 'napalm') {
         for (const z of [...this.zombies]) if (dist2(z.x, z.z, h.x, h.z) < h.r * h.r) this.damageZombie(z, h.dps * dt, h.pid, 'zone');
       } else if (h.kind === 'ring') {
