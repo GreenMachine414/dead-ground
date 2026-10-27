@@ -416,6 +416,25 @@ textarea {
   grid-template-columns: repeat(6, 1fr);
   gap: 10px;
 }
+.lobby-upgrade {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 16px;
+  font-size: 15px;
+}
+.lobup-next {
+  font-size: 13px;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+.lobup-buy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
 .char-card {
   padding: 12px 8px;
   text-align: center;
@@ -1202,6 +1221,8 @@ select {
 .prompt-bar div {
   height: 100%;
   background: var(--leaf);
+  transform-origin: 0 50%;
+  will-change: transform;
 }
 #hud .player {
   position: absolute;
@@ -1564,6 +1585,10 @@ select {
 .w-reload .fill {
   background: linear-gradient(#ffe48a, #f2b13a);
   transition: none;
+  width: 100%;
+  border-radius: 0;
+  transform-origin: 0 50%;
+  will-change: transform;
 }
 #hud .vignette {
   position: absolute;

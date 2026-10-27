@@ -8,7 +8,7 @@ export const WEAPONS = {
     ammoCost: 250, color: 0xffe08a, sound: 'pistol', len: 0.45, gunColor: 0x2a2a2a, boxWeight: 0,
   },
   revolver: {
-    name: 'Python .357', map: 1, type: 'hitscan', damage: 160, rate: 2.2, auto: false,
+    name: 'Python .357', map: 1, type: 'hitscan', damage: 112, rate: 2.2, auto: false,
     mag: 6, reserve: 54, reload: 2.0, spread: 0.01, range: 36, pierce: 3,
     ammoCost: 500, color: 0xffd060, sound: 'revolver', len: 0.55, gunColor: 0x8a8a90, boxWeight: 8,
   },
@@ -33,7 +33,7 @@ export const WEAPONS = {
     ammoCost: 1000, color: 0xff9040, sound: 'thump', len: 0.8, gunColor: 0x4a5a3a, boxWeight: 8,
   },
   sniper: {
-    name: 'Longshot .50', map: 3, type: 'hitscan', damage: 650, rate: 1.1, auto: false,
+    name: 'Longshot .50', map: 3, type: 'hitscan', damage: 150, rate: 1.1, auto: false,
     mag: 5, reserve: 40, reload: 2.8, spread: 0.0, range: 70, pierce: 8,
     ammoCost: 1000, color: 0xffffff, sound: 'sniper', len: 1.25, gunColor: 0x252a20, boxWeight: 7,
   },
@@ -48,12 +48,12 @@ export const WEAPONS = {
     ammoCost: 1300, color: 0xffd080, sound: 'rifle', len: 1.15, gunColor: 0x2e3328, boxWeight: 7,
   },
   raygun: {
-    name: 'Plasma Ray', map: 4, type: 'projectile', damage: 420, pierce: 3, rate: 3.2, auto: false,
+    name: 'Plasma Ray', map: 4, type: 'projectile', damage: 200, pierce: 3, rate: 3.2, auto: false,
     mag: 20, reserve: 160, reload: 2.2, spread: 0.01, range: 40, projSpeed: 40, proj: 'ray',
     ammoCost: 1500, color: 0x40ff60, sound: 'ray', len: 0.6, gunColor: 0xc0c8d0, boxWeight: 4,
   },
   tesla: {
-    name: 'Storm Caller', map: 5, type: 'chain', damage: 720, chain: 7, rate: 1.6, auto: false,
+    name: 'Storm Caller', map: 5, type: 'chain', damage: 350, chain: 7, rate: 1.6, auto: false,
     mag: 1, fixedMag: true, reserve: 72, reload: 2.5, spread: 0, range: 18,
     ammoCost: 1800, color: 0x80c8ff, sound: 'zap', len: 0.9, gunColor: 0x4a5a7a, boxWeight: 3,
   },
@@ -63,7 +63,7 @@ export const WEAPONS = {
     ammoCost: 1800, color: 0xffc060, sound: 'smg', len: 1.2, gunColor: 0x3a3a3a, boxWeight: 4,
   },
   crossbow: {
-    name: 'Bolt Caster', map: 2, type: 'projectile', damage: 380, splash: 2.6, rate: 1.5, auto: false,
+    name: 'Bolt Caster', map: 2, type: 'projectile', damage: 100, splash: 2.6, rate: 1.5, auto: false,
     mag: 3, reserve: 30, reload: 2.2, spread: 0, range: 34, projSpeed: 30, proj: 'bolt',
     ammoCost: 900, color: 0xff4040, sound: 'thump', len: 0.85, gunColor: 0x5a4030, boxWeight: 6,
   },

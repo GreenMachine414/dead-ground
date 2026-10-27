@@ -1,7 +1,7 @@
 {
   "name": "zombie-survival",
   "productName": "Dead Ground",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Top-down co-op zombie survival",
   "main": "electron/main.js",
   "private": true,

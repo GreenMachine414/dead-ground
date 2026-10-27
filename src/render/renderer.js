@@ -5,6 +5,7 @@ import { ZOMBIES, PERKS, POWERUPS } from '../data/zombies.js';
 import { CONTAINERS } from '../data/loot.js';
 import { BOONS } from '../data/boons.js';
 import { ZTYPES, WIDS } from '../game/sim.js';
+import { rayGrid } from '../game/physics.js';
 import { paintGround, PX } from './groundpaint.js';
 import * as S from './sprites.js';
 
@@ -29,14 +30,16 @@ const FORGE_FX = [
   null,
   {
     flame: '#c46aff', muzzle: '#e0a0ff', flash: '#c080ff', tracer: '#b060ff', ray: '#ff6aff', bolt: '#b070ff', hot: '#f0dcff',
-    dust: ['#6a1ab8', '#9b59d0', '#b070ff', '#d8a8ff'], aura: '#b070ff', dustEvery: 0.04,
+    dust: ['#6a1ab8', '#9b59d0', '#b070ff', '#d8a8ff'], aura: '#b070ff', dustEvery: 0.1,
   },
   {
     flame: '#ff2a3a', muzzle: '#ffb0a8', flash: '#ff3a3a', tracer: '#ff2a3a', ray: '#ff2a4a', bolt: '#ff2a3a', hot: '#ffd6cc',
-    dust: ['#e0102a', '#ff2a3a', '#ff4a3a', '#ff9a8a'], aura: '#ff2a3a', dustEvery: 0.03,
+    dust: ['#e0102a', '#ff2a3a', '#ff4a3a', '#ff9a8a'], aura: '#ff2a3a', dustEvery: 0.075,
   },
 ];
-const DUST_FLARE = 0.2; // share of motes that are big flares with a white-hot glint
+const DUST_FLARE = 0.08;
+// flamethrower particles: life, drag, and the distance covered per unit of launch speed
+const FLAME_LIFE = 0.42, FLAME_DRAG = 0.8, FLAME_REACH = (1 - Math.exp(-FLAME_DRAG * FLAME_LIFE)) / FLAME_DRAG; // share of motes that are big flares with a white-hot glint
 const DUST_PULSE = 1.4; // seconds between ground pulse rings
 // machine names fade in from this many units away; the price joins the name within LABEL_DETAIL
 const LABEL_NEAR = 9, LABEL_DETAIL = 4, LABEL_FADE = 1.5;
@@ -1440,7 +1443,7 @@ export class Renderer {
   gunDust(o, fx) {
     const t = this.time;
     const gx = o.x + Math.cos(o.a) * 0.55, gz = o.z + Math.sin(o.a) * 0.55;
-    this.glowAt(gx, gz, 1.8 + Math.sin(t * 5) * 0.4, fx.aura, 0.4);
+    this.glowAt(gx, gz, 1.5 + Math.sin(t * 5) * 0.3, fx.aura, 0.22);
     if (t - (o.pulseT || 0) > DUST_PULSE) {
       o.pulseT = t;
       this.rings.push({ x: o.x, z: o.z, r0: 0.3, r1: 1.7, col: fx.aura, life: 0.8, max: 0.8, w: 0.07, flat: true });
@@ -1454,10 +1457,10 @@ export class Renderer {
     const vx = -sa * 1.1 + ca * 0.25, vz = ca * 0.7 + sa * 0.15, vh = 0.5 + Math.random() * 0.6;
     if (Math.random() < DUST_FLARE) {
       const life = 0.9 + Math.random() * 0.4;
-      this.emit(x, z, h, vx, vz, vh, fx.aura, life, 0.17 + Math.random() * 0.06, { drag: 1.2, shape: 'spark' });
-      this.emit(x, z, h, vx, vz, vh, fx.hot, life, 0.07, { drag: 1.2, shape: 'spark', glow: true });
+      this.emit(x, z, h, vx, vz, vh, fx.aura, life, 0.12 + Math.random() * 0.04, { drag: 1.2, shape: 'spark' });
+      this.emit(x, z, h, vx, vz, vh, fx.hot, life, 0.05, { drag: 1.2, shape: 'spark', glow: true });
     } else {
-      this.emit(x, z, h, vx, vz, vh, fx.dust[(Math.random() * fx.dust.length) | 0], 0.6 + Math.random() * 0.6, 0.07 + Math.random() * 0.06, { drag: 1.5, shape: 'spark' });
+      this.emit(x, z, h, vx, vz, vh, fx.dust[(Math.random() * fx.dust.length) | 0], 0.5 + Math.random() * 0.4, 0.05 + Math.random() * 0.04, { drag: 1.5, shape: 'spark' });
     }
   }
 
@@ -2043,9 +2046,15 @@ export class Renderer {
         const fx = FORGE_FX[e.f];
         const mx = e.x + Math.cos(e.a) * w.len * 0.7, mz = e.z + Math.sin(e.a) * w.len * 0.7;
         if (w.type === 'flame') {
+          // Match the sim's damage cone: reach out to the weapon's range (measured from the player,
+          // stopping at walls, which also block the damage) across the full hit angle. With drag a
+          // particle flies speed * FLAME_REACH over its life, so pick speeds that end inside that reach.
+          const dx = Math.cos(e.a), dz = Math.sin(e.a);
+          const reach = Math.max(0.5, rayGrid(this.world, e.x, e.z, dx, dz, w.range + 0.4) - w.len * 0.7);
+          const half = w.spread + 0.15;
           for (let i = 0; i < 4; i++) {
-            const a = e.a + (Math.random() - 0.5) * 0.6, s = 8 + Math.random() * 5;
-            this.emit(mx, mz, 0.9, Math.cos(a) * s, Math.sin(a) * s, 0.3, Math.random() < 0.4 ? '#ffe070' : fx ? fx.flame : '#ff7a2a', 0.5, 0.2, { grow: 2.2, drag: 2.2, glow: true });
+            const a = e.a + (Math.random() * 2 - 1) * half * 0.85, s = (reach / FLAME_REACH) * Math.sqrt(0.2 + Math.random() * 0.8);
+            this.emit(mx, mz, 0.9, Math.cos(a) * s, Math.sin(a) * s, 0.3, Math.random() < 0.4 ? '#ffe070' : fx ? fx.flame : '#ff7a2a', FLAME_LIFE, 0.2, { grow: 2.6, drag: FLAME_DRAG, glow: true });
           }
         } else {
           this.emit(mx, mz, 0.95, 0, 0, 0, fx ? fx.muzzle : '#fff0b0', 0.06, 0.35, { glow: true });

@@ -356,16 +356,20 @@ class App {
           ${cost === null ? 'MAX LEVEL' : `Upgrade — ⚙ ${cost}`}</button>
       </div>`;
     }).join('');
-    $$('[data-up]').forEach((b) => b.addEventListener('click', () => {
-      const id = b.dataset.up;
-      const cost = upgradeCost(p.levels[id]);
-      if (cost === null || p.salvage < cost) return;
-      p.salvage -= cost;
-      p.levels[id]++;
-      this.save();
-      this.audio.play('perk');
-      this.renderUpgrades();
-    }));
+    $$('[data-up]').forEach((b) => b.addEventListener('click', () => this.buyUpgrade(b.dataset.up) && this.renderUpgrades()));
+  }
+
+  // spend salvage on a character level; in a lobby the new level goes to everyone with the pick
+  buyUpgrade(id) {
+    const p = this.profile;
+    const cost = upgradeCost(p.levels[id]);
+    if (cost === null || p.salvage < cost) return false;
+    p.salvage -= cost;
+    p.levels[id]++;
+    this.save();
+    this.audio.play('perk');
+    if (this.lobby && !this.session && p.char === id) this.selectChar(id);
+    return true;
   }
 
   // ---------------------------------------------------------------- lobby
@@ -546,6 +550,17 @@ class App {
       </button>`;
     }).join('');
     $$('[data-char]').forEach((b) => b.addEventListener('click', () => this.selectChar(b.dataset.char)));
+    // upgrade the picked survivor without leaving the lobby
+    const c = CHARACTERS[myChar], lvl = this.profile.levels[myChar], cost = upgradeCost(lvl);
+    const can = cost !== null && this.profile.salvage >= cost;
+    $('#lobby-upgrade').innerHTML = `<div class="lobup-info"><b>${c.name}</b> · ${c.ability} Level ${lvl}/${MAX_LEVEL}
+        <div class="lobup-next">${cost === null ? 'Fully upgraded' : 'Next: ' + c.levels[lvl]}</div></div>
+      <div class="lobup-buy"><span>⚙ ${this.profile.salvage}</span>
+        <button id="lobby-up" class="${can ? 'big' : ''}" ${can ? '' : 'disabled'}>${cost === null ? 'MAX LEVEL' : `Upgrade — ⚙ ${cost}`}</button></div>`;
+    $('#lobby-up').addEventListener('click', () => {
+      this.buyUpgrade(myChar);
+      this.renderLobby();
+    });
     // players
     $('#lobby-players').innerHTML = L.players.map((p) => `<div class="lp"><div><b>${esc(p.name)}</b>${p.host ? '<span class="host-tag">HOST</span>' : ''}
         <div class="lp-char">${CHARACTERS[p.char].name} · ${CHARACTERS[p.char].ability} Lv ${p.level}</div></div></div>`).join('');

@@ -2,7 +2,7 @@
 //   solo   - local sim, no network
 //   host   - local sim, broadcasts snapshots to clients, applies their inputs
 //   client - renders host snapshots, predicts its own movement locally
-import { Game, createWorld, getMap, stepMovement, playerSpeed, WIDS } from './game/sim.js';
+import { Game, createWorld, getMap, stepMovement, playerSpeed, WIDS, mergeActs, swapTarget } from './game/sim.js';
 import { WEAPONS } from './data/weapons.js';
 import { Renderer } from './render/renderer.js';
 import { Hud } from './hud.js';
@@ -117,7 +117,11 @@ export class Session {
         this.pick(digit);
         return true;
       }
-      if (digit <= 2 && me && me.cw !== digit - 1 && me.w[digit - 1]) this.input.acts.swap = true;
+      // the sim picks the slot against its own current weapon; checking the (older) snapshot here dropped presses
+      if (digit <= 2 && this.input.enabled) {
+        this.input.acts.slot = digit;
+        delete this.input.acts.swap;
+      }
       return true;
     }
     return false;
@@ -200,9 +204,23 @@ export class Session {
       events = this.clientEvents;
       this.clientEvents = [];
       const inp = this.input.sample(aim);
-      for (const k in inp.acts) if (inp.acts[k]) this.pendingActs[k] = true;
+      mergeActs(this.pendingActs, inp.acts);
       const me = snap.P.find((p) => p.id === this.localId);
       if (me) {
+        // show a weapon swap right away; the host's snapshot takes over once it agrees (or after 0.6 s)
+        if (inp.acts.swap || inp.acts.slot) {
+          const cw = swapTarget(this.cwPred ? this.cwPred.cw : me.cw, inp.acts);
+          if (me.w[cw]) {
+            this.cwPred = { cw, until: now + 600 };
+            this.localFireCd = Math.max(this.localFireCd, 0.35);
+          }
+        }
+        if (this.cwPred) {
+          // a snapshot is reused until the next one arrives, so keep the host's own value to compare against
+          if (me.hcw === undefined) me.hcw = me.cw;
+          if (me.hcw === this.cwPred.cw || now > this.cwPred.until) this.cwPred = null;
+          else me.cw = this.cwPred.cw;
+        }
         if (!this.pred || this.pred.tp !== me.tp || Math.hypot(this.pred.x - me.x, this.pred.z - me.z) > 6) {
           this.pred = { x: me.x, z: me.z, stamina: me.st, tp: me.tp, perks: {}, char: me.c, moving: false, sprinting: false };
         }

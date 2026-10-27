@@ -46,6 +46,26 @@ const angDiff = (a, b) => {
   return d;
 };
 
+// Folds one input's press actions into a pending set. Swap presses add up (each one toggles);
+// a later slot or pick replaces an earlier one, and a slot press cancels queued swaps.
+export function mergeActs(into, acts) {
+  if (!acts) return;
+  for (const k in acts) {
+    const v = acts[k];
+    if (!v) continue;
+    if (k === 'swap') into.swap = (into.swap | 0) + (v | 0 || 1);
+    else into[k] = v;
+  }
+  if (acts.slot && !acts.swap) delete into.swap;
+}
+
+// weapon slot (0/1) a player ends on after this tick's slot/swap presses
+export function swapTarget(cur, acts) {
+  let w = acts.slot ? acts.slot - 1 : cur;
+  if ((acts.swap | 0) % 2) w = 1 - w;
+  return w;
+}
+
 // Shared with clients for local movement prediction.
 export function playerSpeed(p, weaponId) {
   const w = WEAPONS[weaponId];
@@ -235,8 +255,7 @@ export class Game {
   setInput(pid, input) {
     const p = this.players.find((q) => q.id === pid);
     if (!p) return;
-    const acts = input.acts || {};
-    for (const k in acts) if (acts[k]) p.acts[k] = acts[k];
+    mergeActs(p.acts, input.acts);
     p.input = input;
   }
 
@@ -372,8 +391,9 @@ export class Game {
         w.reserve -= take;
       }
     }
-    if (acts.swap && p.weapons[1]) {
-      p.cur = 1 - p.cur;
+    const want = swapTarget(p.cur, acts);
+    if (want !== p.cur && p.weapons[want]) {
+      p.cur = want;
       p.reloadT = 0;
       p.fireCd = 0.35;
       this.emit({ k: 'sfx', s: 'swap', x: p.x, z: p.z, p: p.id });
@@ -701,7 +721,7 @@ export class Game {
     let ok = true;
     if (p.char === 'sparks') ok = this.placeTurret(p, st, scale);
     else if (p.char === 'doc') this.healField(p, st);
-    else if (p.char === 'mags') this.supplyDrop(p, st, ax, az);
+    else if (p.char === 'mags') this.supplyDrop(p, st);
     else if (p.char === 'rook') this.airstrike(p, st, scale, ax, az);
     else if (p.char === 'volt') {
       this.chainLightning(p.id, p.x, p.z, p.ang, st.damage * scale, st.chains, st.stun, 16);
@@ -734,18 +754,6 @@ export class Game {
       this.emit({ k: 'sfx', s: 'nope', p: p.id, x: p.x, z: p.z });
       return false;
     }
-    // never let a wall seal anyone into a pocket: each player must keep at least half
-    // of the area they could walk to before the wall went up
-    const extra = new Set(cells.map(([x, z]) => z * this.world.W + x));
-    for (const q of this.players) {
-      if (q.state === 'dead') continue;
-      const before = this.reachableCells(q.x, q.z);
-      if (this.reachableCells(q.x, q.z, extra) < (before - cells.length) * 0.5) {
-        this.emit({ k: 'sfx', s: 'nope', p: p.id, x: p.x, z: p.z });
-        this.emit({ k: 'note', p: p.id, s: q === p ? 'That would box you in' : 'That would box in ' + q.name });
-        return false;
-      }
-    }
     const s = {
       id: this.nextId++, kind: 'wall', owner: p.id, cells, x: cx, z: cz, horizontal,
       hp: st.wallHp, maxHp: st.wallHp, spikes: st.spikes, lvl: p.lvl, life: Infinity,
@@ -756,27 +764,6 @@ export class Game {
     for (let i = 0; i < mine.length - st.maxWalls; i++) this.destroyStruct(mine[i]);
     this.emit({ k: 'sfx', s: 'build', x: cx, z: cz });
     return true;
-  }
-
-  // Number of walkable cells reachable from (x,z), treating `extra` cell indices as blocked.
-  reachableCells(x, z, extra) {
-    const { W, H, grid } = this.world;
-    const seen = new Uint8Array(W * H);
-    const start = Math.floor(z) * W + Math.floor(x);
-    const stack = [start];
-    seen[start] = 1;
-    let n = 0;
-    while (stack.length) {
-      const i = stack.pop();
-      n++;
-      const cx = i % W, cz = (i - cx) / W;
-      for (const j of [cx > 0 ? i - 1 : -1, cx < W - 1 ? i + 1 : -1, cz > 0 ? i - W : -1, cz < H - 1 ? i + W : -1]) {
-        if (j < 0 || seen[j] || grid[j] !== 0 || this.sgrid[j] !== 0 || (extra && extra.has(j))) continue;
-        seen[j] = 1;
-        stack.push(j);
-      }
-    }
-    return n;
   }
 
   placeTurret(p, st, scale) {
@@ -821,36 +808,37 @@ export class Game {
   }
 
   // Mags: toss a supply bag toward the cursor (a second one lands at her feet at level 4+)
-  supplyDrop(p, st, ax, az) {
-    let dx = ax - p.x, dz = az - p.z;
-    const d = Math.hypot(dx, dz) || 1, dd = Math.min(7, d);
-    let x = p.x + (dx / d) * dd, z = p.z + (dz / d) * dd;
-    if (circleBlocked(this.world, this.sgrid, x, z, 0.4) || !hasLOS(this.world, p.x, p.z, x, z)) {
-      x = p.x;
-      z = p.z;
-    }
-    const spots = st.bags > 1 ? [[x, z], [p.x, p.z]] : [[x, z]];
-    for (const [bx, bz] of spots) {
-      this.pickups.push({
-        id: this.nextId++, kind: 'supply', x: bx, z: bz, t: st.life, took: [],
-        restock: Math.min(1, st.restock), grenades: st.grenades, mags: st.mags,
-      });
-      this.emit({ k: 'heal', x: bx, z: bz, r: 1.6, c: '#ffd65a' });
+  // bags land in a ring around Mags (never under him), aimed side first
+  supplyDrop(p, st) {
+    for (let i = 0; i < st.bags; i++) {
+      const base = p.ang + (i * Math.PI * 2) / st.bags;
+      let x = p.x + Math.cos(base) * 1.2, z = p.z + Math.sin(base) * 1.2;
+      for (const off of [0, 0.6, -0.6, 1.2, -1.2]) {
+        const bx = p.x + Math.cos(base + off) * 1.9, bz = p.z + Math.sin(base + off) * 1.9;
+        if (!circleBlocked(this.world, this.sgrid, bx, bz, 0.4)) {
+          x = bx;
+          z = bz;
+          break;
+        }
+      }
+      this.pickups.push({ id: this.nextId++, kind: 'supply', x, z, t: st.life, restock: Math.min(1, st.restock), grenades: st.grenades, mags: st.mags });
+      this.emit({ k: 'heal', x, z, r: 1.2, c: '#ffd65a' });
     }
     this.emit({ k: 'sfx', s: 'throw', x: p.x, z: p.z });
   }
 
-  // each living player can take from a supply bag once; it's gone when all have
+  // a bag goes to the first living player on it who is short on ammo
   grabSupply(k) {
     for (const p of this.players) {
-      if (p.state !== 'alive' || k.took.includes(p.id) || dist2(p.x, p.z, k.x, k.z) > 1.3 * 1.3) continue;
-      k.took.push(p.id);
+      if (p.state !== 'alive' || dist2(p.x, p.z, k.x, k.z) > 1.3 * 1.3) continue;
+      if (!p.weapons.some((w) => w && (w.reserve < this.wstat(p, w).reserve || (k.mags && w.mag < this.wstat(p, w).mag)))) continue;
       this.restock(p, k.restock, k.mags);
       if (k.grenades) p.grenades = Math.min(this.maxGrenades(p), p.grenades + k.grenades);
       this.emit({ k: 'sfx', s: 'pickup', x: k.x, z: k.z });
       this.emit({ k: 'float', x: k.x, z: k.z, s: '+Ammo', p: p.id });
+      this.pickups.splice(this.pickups.indexOf(k), 1);
+      return;
     }
-    if (this.players.every((p) => p.state !== 'alive' || k.took.includes(p.id))) this.pickups.splice(this.pickups.indexOf(k), 1);
   }
 
   // add `frac` of each weapon's max reserve (and optionally top up magazines)
@@ -1593,17 +1581,24 @@ export class Game {
       const reach = z.r + tgt.r + 0.45;
       const big = z.boss || z.mini;
       z.atkCd -= dt;
+      // a wall between this zombie and its target soaks the attack instead
+      const wall = dist < reach + 0.8 ? this.structBetween(z.x, z.z, tgt.x, tgt.z) : null;
       if (z.state === 'attack') {
         z.t -= dt;
         if (!big && dist > reach * 0.6) moveCircle(this.world, this.sgrid, z, (dx / dist) * z.speed * 1.4 * dt, (dz / dist) * z.speed * 1.4 * dt, z.cr);
         if (z.t <= 0) {
           z.state = 'move';
-          if (dist < reach + (big ? 0.5 : 0.8)) {
+          if (dist < reach + (big ? 0.5 : 0.8) && !wall) {
             this.hurtPlayer(tgt, z.damage);
             if (tgt.boons.thorns) this.damageZombie(z, 60 * tgt.boons.thorns * (1 + 0.15 * (this.wave - 1)), tgt.id, 'spikes');
           }
           z.atkCd = z.def.attackRate;
         }
+        continue;
+      }
+      if (wall) {
+        z.ang = Math.atan2(dz, dx);
+        this.hitStruct(z, wall, dx / dist, dz / dist);
         continue;
       }
       if (dist < reach + (big ? 0 : 0.4) && z.atkCd <= 0) {
@@ -1688,12 +1683,30 @@ export class Game {
     const s = this.structs.find((q) => q.id === sid);
     if (!s) return;
     z.atkCd -= dt;
-    if (z.atkCd <= 0) {
-      z.atkCd = z.def.attackRate;
-      this.emit({ k: 'hitwall', x: z.x + mx * 0.8, z: z.z + mz * 0.8 });
-      this.damageStruct(s, z.damage * (z.boss || z.mini ? 4 : 1.5));
-      if (s.spikes) this.damageZombie(z, s.spikes * (1 + 0.15 * (this.wave - 1)), s.owner, 'spikes');
+    this.hitStruct(z, s, mx, mz);
+  }
+
+  // one swing at a structure once the attack cooldown is up (every zombie type can do this)
+  hitStruct(z, s, mx, mz) {
+    if (z.atkCd > 0) return;
+    z.atkCd = z.def.attackRate;
+    this.emit({ k: 'hitwall', x: z.x + mx * 0.8, z: z.z + mz * 0.8 });
+    this.damageStruct(s, z.damage * (z.boss || z.mini ? 4 : 1.5));
+    if (s.spikes) this.damageZombie(z, s.spikes * (1 + 0.15 * (this.wave - 1)), s.owner, 'spikes');
+  }
+
+  // first structure on the segment between two points (sampled every 0.3), or null
+  structBetween(x1, z1, x2, z2) {
+    if (!this.structs.length) return null;
+    const { W, H } = this.world;
+    const d = Math.hypot(x2 - x1, z2 - z1), n = Math.ceil(d / 0.3);
+    for (let i = 1; i < n; i++) {
+      const cx = Math.floor(x1 + ((x2 - x1) * i) / n), cz = Math.floor(z1 + ((z2 - z1) * i) / n);
+      if (cx < 0 || cz < 0 || cx >= W || cz >= H) continue;
+      const sid = this.sgrid[cz * W + cx];
+      if (sid) return this.structs.find((q) => q.id === sid) || null;
     }
+    return null;
   }
 
   // Regular zombie special abilities. Returns true if it consumed the update.
@@ -1703,7 +1716,7 @@ export class Game {
     if (z.state === 'leap') {
       z.t -= dt;
       moveCircle(this.world, this.sgrid, z, z.lvx * dt, z.lvz * dt, z.cr);
-      if (dist < z.r + tgt.r + 0.5 && !z.leapHit) {
+      if (dist < z.r + tgt.r + 0.5 && !z.leapHit && !this.structBetween(z.x, z.z, tgt.x, tgt.z)) {
         z.leapHit = true;
         this.hurtPlayer(tgt, z.damage);
       }
@@ -1739,7 +1752,7 @@ export class Game {
       z.ang = Math.atan2(tgt.z - z.z, tgt.x - z.x);
       return true;
     }
-    if (def.leap && z.los && dist > def.leap.min && dist < def.leap.max) {
+    if (def.leap && z.los && dist > def.leap.min && dist < def.leap.max && !this.structBetween(z.x, z.z, tgt.x, tgt.z)) {
       z.specialCd = def.leap.cooldown;
       z.state = 'windup';
       z.pending = 'leap';
@@ -1752,7 +1765,7 @@ export class Game {
       const a = this.rng() * Math.PI * 2;
       const r = 2.5 + this.rng() * 2;
       const nx = tgt.x + Math.cos(a) * r, nz = tgt.z + Math.sin(a) * r;
-      if (!circleBlocked(this.world, this.sgrid, nx, nz, z.cr) && hasLOS(this.world, tgt.x, tgt.z, nx, nz)) {
+      if (!circleBlocked(this.world, this.sgrid, nx, nz, z.cr) && hasLOS(this.world, tgt.x, tgt.z, nx, nz) && !this.structBetween(tgt.x, tgt.z, nx, nz)) {
         this.emit({ k: 'blink', x: z.x, z: z.z, x2: nx, z2: nz });
         z.x = nx;
         z.z = nz;

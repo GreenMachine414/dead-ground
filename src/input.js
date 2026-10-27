@@ -30,7 +30,8 @@ export class Input {
       if (this.onKey && this.onKey(e, code)) return;
       if (!this.enabled) return;
       const act = this.actByCode[code];
-      if (act && !e.repeat) this.acts[act] = true;
+      // swaps are counted so a quick double-tap is not merged into one
+      if (act && !e.repeat) this.acts[act] = act === 'swap' ? (this.acts.swap | 0) + 1 : true;
       this.keys.add(code);
     });
     on('keyup', (e) => {

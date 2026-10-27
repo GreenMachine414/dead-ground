@@ -34,7 +34,7 @@ export const ZOMBIES = {
     color: 0x8aa0b8, shirt: 0x2a3a4a, points: 100, scale: 0.95, leap: { min: 3, max: 9, cooldown: 3.5 },
   },
   phantom: {
-    name: 'Phantom', hp: 170, speed: 3.1, damage: 26, attackRate: 1.0, radius: 0.42,
+    name: 'Phantom', hp: 170, speed: 2.79, damage: 26, attackRate: 1.0, radius: 0.42,
     color: 0x9a70d0, shirt: 0x3a2050, points: 120, scale: 1, phase: { cooldown: 4 },
   },
   burner: {

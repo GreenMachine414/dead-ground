@@ -67,6 +67,7 @@ export class Hud {
     this.popT = 0;
     this.popSum = 0;
     this.cache = {};
+    this.bars = {}; // smoothed progress bars, see bar()
     this.showScore = false;
     this.onPick = null;
     this.el.luCards.addEventListener('mousedown', (e) => {
@@ -194,7 +195,28 @@ export class Hud {
     while (this.el.notes.children.length > 6) this.el.notes.firstChild.remove();
   }
 
-  set(key, el, value, prop = 'textContent') {
+  // Timed bars (looting, building, reviving, reloading) only change on sim ticks or snapshots, which
+  // looks steppy at high refresh rates or over the network. Carry the bar on at its measured rate
+  // between updates (at most 0.15 s ahead) and draw it with a transform, which skips layout.
+  bar(key, el, v, dt) {
+    let b = this.bars[key];
+    if (!b) b = this.bars[key] = { v: -1, at: 0, rate: 0, shown: 0, t: 0 };
+    b.t += dt;
+    if (v !== b.v) {
+      const step = v - b.v, gap = b.t - b.at;
+      if (b.v < 0 || step < 0 || step > 0.3 || gap > 0.25) {
+        // new or restarted bar: jump to it
+        b.rate = 0;
+        b.shown = v;
+      } else b.rate = b.rate ? b.rate * 0.6 + (step / Math.max(gap, 0.004)) * 0.4 : step / Math.max(gap, 0.004);
+      b.v = v;
+      b.at = b.t;
+    }
+    b.shown = Math.max(b.shown, Math.min(1, v + b.rate * Math.min(b.t - b.at, 0.15)));
+    el.style.transform = `scaleX(${b.shown})`;
+  }
+
+    set(key, el, value, prop = 'textContent') {
     if (this.cache[key] === value) return;
     this.cache[key] = value;
     el[prop] = value;
@@ -324,7 +346,8 @@ export class Hud {
     const alt = me.w[1 - me.cw];
     this.set('alt', el.wAlt, alt ? `[${this.keys.swap}] ${RARITY[alt[5] || 0].name} ${WEAPONS[alt[0]].name}` : '');
     el.reload.style.display = me.rl >= 0 ? 'block' : 'none';
-    if (me.rl >= 0) el.reloadFill.style.width = me.rl * 100 + '%';
+    if (me.rl >= 0) this.bar('rl', el.reloadFill, me.rl, dt);
+    else this.bars.rl = null;
     // XP
     this.set('xpl', el.xpLvl, 'Lv ' + me.rk);
     el.xpFill.style.width = Math.min(100, (me.xp / me.xpn) * 100) + '%';
@@ -358,7 +381,8 @@ export class Hud {
       }
       this.set('pr', el.promptText, this.pr);
       el.promptBar.style.display = me.pp >= 0 ? 'block' : 'none';
-      if (me.pp >= 0) el.promptFill.style.width = Math.min(1, me.pp) * 100 + '%';
+      if (me.pp >= 0) this.bar('pp', el.promptFill, Math.min(1, me.pp), dt);
+      else this.bars.pp = null;
     }
     this.hurtT = Math.max(0, this.hurtT - dt * 2);
     el.vignette.style.opacity = Math.max(this.hurtT * 0.8, hpf < 0.4 ? (0.4 - hpf) * 1.6 : 0);
