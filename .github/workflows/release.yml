@@ -1,0 +1,63 @@
+# Every push to main (including merges) builds the Windows exes and publishes a GitHub release
+# named after package.json's version. If that version was already released, nothing happens,
+# so bump the version before merging to ship a new release.
+name: Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Read version
+        id: v
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(node -p "require('./package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if gh release view "v$V" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "v$V is already released; bump package.json's version to publish a new one."
+          fi
+
+      - name: Install
+        if: steps.v.outputs.exists != 'true'
+        run: npm ci
+
+      - name: Test
+        if: steps.v.outputs.exists != 'true'
+        run: npm test
+
+      - name: Build exes
+        if: steps.v.outputs.exists != 'true'
+        run: npm run dist -- --publish never
+
+      - name: Publish release
+        if: steps.v.outputs.exists != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=${{ steps.v.outputs.version }}
+          cp "release/Dead Ground $V.exe" "Dead-Ground-$V-portable.exe"
+          cp "release/Dead Ground Setup $V.exe" "Dead-Ground-Setup-$V.exe"
+          gh release create "v$V" "Dead-Ground-$V-portable.exe" "Dead-Ground-Setup-$V.exe" \
+            --target "$GITHUB_SHA" --title "Dead Ground v$V" --generate-notes \
+            --notes "Everyone in a co-op game needs the same version. Download the portable exe (no install) or the Setup exe (installer)."
