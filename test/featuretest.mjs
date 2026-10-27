@@ -50,9 +50,48 @@ for (let m = 1; m <= 5; m++) {
     const z = g.spawnZombie('walker', p.x + 3, p.z, false);
     g.damageZombie(z, 1e6, p.id, 'bullet');
   }
+  const before = p.points;
   run(g, 0.1, use);
+  check('forge XX costs 10000', before - p.points === 10000, `${before - p.points}`);
   run(g, 3);
   check('forge XX after 100 kills', p.weapons[0].forged === 2 && g.wstat(p, p.weapons[0]).name.endsWith(' XX'));
+}
+
+// 2b) forge damage is a fixed multiplier (X x1.5, XX x2 of the unforged gun, any round), and
+// bosses take only half the bonus
+{
+  const g = quiet(3);
+  const p = g.players[0];
+  const dmg = (lvl, rarity = 0) => g.wstat(p, g.makeWeapon('ar', lvl, rarity)).damage;
+  const x = dmg(1) / dmg(0), xx = dmg(2) / dmg(0), xxLeg = dmg(2, 4) / dmg(0, 4);
+  check('forge multipliers fixed', Math.abs(x - 1.5) < 1e-9 && Math.abs(xx - 2) < 1e-9 && Math.abs(xxLeg - 2) < 1e-9, `X ${x.toFixed(2)}, XX ${xx.toFixed(2)}`);
+  p.weapons[0] = g.makeWeapon('ar', 2);
+  p.cur = 0;
+  const hit = (type) => {
+    const z = g.spawnZombie(type, p.x + 3, p.z, false);
+    z.hp = 1e7;
+    g.damageZombie(z, 1000, p.id, 'bullet');
+    return 1e7 - z.hp;
+  };
+  const boss = hit('harvester'), walker = hit('walker');
+  check('bosses take half the forge bonus', walker === 1000 && Math.abs(boss - (1000 * (1 + (xx - 1) * 0.5)) / xx) < 1e-6, `boss ${boss.toFixed(1)}`);
+}
+
+// 2d) Storm Caller: 720 damage, one shot per reload at every forge level and rarity, 2.5s reload
+{
+  const g = quiet(5);
+  const p = g.players[0];
+  const st = (lvl, r) => g.wstat(p, g.makeWeapon('tesla', lvl, r));
+  const mags = [st(0, 0), st(1, 4), st(2, 4)].map((s) => s.mag);
+  check('storm caller nerf', st(0, 0).damage === 720 && st(0, 0).reload === 2.5 && mags.every((m) => m === 1), `mags ${mags}`);
+}
+
+// 2c) runners stay faster than walkers but never outrun a walking player
+{
+  const g = quiet(1);
+  g.wave = 40;
+  const runner = g.spawnZombie('runner', 10, 10, false), walker = g.spawnZombie('walker', 10, 12, false);
+  check('runner speed capped', runner.speed > walker.speed && runner.speed <= 5.4 * 0.9 + 1e-9, `runner ${runner.speed.toFixed(2)}, walker ${walker.speed.toFixed(2)}`);
 }
 
 // 3) grenade launcher lands near the cursor

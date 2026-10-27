@@ -14,7 +14,7 @@ export function defaultProfile() {
     char: 'brick',
     best: {},
     stats: { kills: 0, games: 0, wins: 0 },
-    settings: { master: 0.8, sfx: 0.9, music: 0.35, shake: true, graphics: 'auto', fullscreen: false, lastJoin: '127.0.0.1', port: 27015 },
+    settings: { master: 0.8, sfx: 0.9, music: 0.35, shake: true, graphics: 'auto', fullscreen: false, lastJoin: '127.0.0.1', port: 27015, keys: {} },
   };
 }
 

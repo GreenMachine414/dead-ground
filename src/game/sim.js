@@ -1,6 +1,6 @@
 // Authoritative game simulation. Runs on the host (or in solo play) and produces
 // snapshots that the renderer / remote clients consume. No DOM or three.js here.
-import { WEAPONS, weaponStats, weaponsForMap, FORGE, FORGE2, RARITY, rollRarity } from '../data/weapons.js';
+import { WEAPONS, weaponStats, weaponsForMap, FORGE, FORGE2, FORGE_DMG, FORGE_BOSS, RARITY, rollRarity } from '../data/weapons.js';
 import { ZOMBIES, POWERUPS, PERKS } from '../data/zombies.js';
 import { CHARACTERS } from '../data/characters.js';
 import { MAPS, getMap } from '../data/maps.js';
@@ -16,6 +16,10 @@ export const ZTYPES = Object.keys(ZOMBIES);
 export const WIDS = Object.keys(WEAPONS);
 export const PLAYER_R = 0.4;
 export const BASE_SPEED = 5.4;
+// regular zombies never outrun a walking player, however late the round (screamer buffs aside)
+const ZOMBIE_SPEED_CAP = BASE_SPEED * 0.9;
+// weapon stats with a player's reserve-ammo bonus: stats object -> (multiplier -> stats)
+const WSTAT_CACHE = new WeakMap();
 const STATE_CODE = { alive: 0, down: 1, dead: 2 };
 const BLEED_TIME = 45; // seconds a downed player can wait for a revive
 // upgrade machine: price of the nth purchase (per player) is SHOP_COST + n * SHOP_STEP
@@ -205,17 +209,23 @@ export class Game {
     }
   }
 
-  makeWeapon(id, forged = false, rarity = 0) {
+  makeWeapon(id, forged = 0, rarity = 0) {
+    forged = +forged || 0; // forge level 0 / 1 / 2 (booleans accepted); indexes the forge tables
     const st = weaponStats(id, forged, rarity);
     return { id, forged, rarity, mag: st.mag, reserve: st.reserve, forging: 0 };
   }
 
   // weapon stats for a specific player (rarity + forge + level-up bonuses)
+  // (called every frame, so reserve-boosted variants are cached per stats object and multiplier)
   wstat(p, w) {
     const st = weaponStats(w.id, w.forged, w.rarity || 0);
     const mult = (1 + 0.25 * (p.boons.bandolier || 0)) * (p.char === 'mags' ? 1.25 : 1);
     if (mult === 1) return st;
-    return { ...st, reserve: Math.round(st.reserve * mult) };
+    let byMult = WSTAT_CACHE.get(st);
+    if (!byMult) WSTAT_CACHE.set(st, (byMult = new Map()));
+    let out = byMult.get(mult);
+    if (!out) byMult.set(mult, (out = { ...st, reserve: Math.round(st.reserve * mult) }));
+    return out;
   }
 
   maxGrenades(p) {
@@ -421,7 +431,7 @@ export class Game {
     const ca = Math.cos(p.ang), sa = Math.sin(p.ang);
     const ox = p.x + ca * 0.6, oz = p.z + sa * 0.6;
     const wi = WIDS.indexOf(w.id);
-    this.emit({ k: 'fire', p: p.id, w: wi, x: ox, z: oz, a: p.ang, f: w.forged ? 1 : 0 });
+    this.emit({ k: 'fire', p: p.id, w: wi, x: ox, z: oz, a: p.ang, f: w.forged || 0 });
     if (ws.type === 'hitscan' || ws.type === 'pellets') {
       const count = ws.pellets || 1;
       const spreadMult = p.moving ? 1.3 : 1;
@@ -429,7 +439,7 @@ export class Game {
         const a = p.ang + (this.rng() - 0.5) * 2 * ws.spread * spreadMult;
         const dx = Math.cos(a), dz = Math.sin(a);
         const end = this.hitscan(p.id, ox, oz, dx, dz, ws.range, dmg, ws.pierce || 1, 'bullet');
-        this.emit({ k: 't', x: ox, z: oz, x2: ox + dx * end, z2: oz + dz * end, w: wi, f: w.forged ? 1 : 0 });
+        this.emit({ k: 't', x: ox, z: oz, x2: ox + dx * end, z2: oz + dz * end, w: wi, f: w.forged || 0 });
       }
     } else if (ws.type === 'projectile' && ws.lob) {
       // arc the shell onto the cursor (clamped to range); it bursts where it lands
@@ -462,11 +472,11 @@ export class Game {
         if (!hasLOS(this.world, p.x, p.z, z.x, z.z)) continue;
         this.damageZombie(z, dmg, p.id, 'fire');
         z.burn = 3;
-        z.burnDps = ws.burn * (w.forged ? 2 : 1);
+        z.burnDps = ws.burn * FORGE_DMG[w.forged];
         z.burnBy = p.id;
       }
     } else if (ws.type === 'chain') {
-      this.chainLightning(p.id, ox, oz, p.ang, dmg, ws.chain, 0.5, ws.range, 'chain');
+      this.chainLightning(p.id, ox, oz, p.ang, dmg, ws.chain, 0.5, ws.range, 'chain', w.forged);
     }
   }
 
@@ -493,7 +503,7 @@ export class Game {
     return end;
   }
 
-  chainLightning(pid, ox, oz, ang, dmg, chains, stun, range, kind = 'ability') {
+  chainLightning(pid, ox, oz, ang, dmg, chains, stun, range, kind = 'ability', forged = 0) {
     let best = null, bestD = Infinity;
     for (const z of this.zombies) {
       if (z.state === 'rise' && z.t > 0.8) continue;
@@ -510,7 +520,7 @@ export class Game {
     const pts = [ox, oz];
     if (!best) {
       pts.push(ox + Math.cos(ang) * 6, oz + Math.sin(ang) * 6);
-      this.emit({ k: 'zap', pts });
+      this.emit({ k: 'zap', pts, f: forged });
       return;
     }
     const hit = new Set();
@@ -534,7 +544,7 @@ export class Game {
       }
       cur = next;
     }
-    this.emit({ k: 'zap', pts });
+    this.emit({ k: 'zap', pts, f: forged });
   }
 
   explode(x, z, radius, dmg, src) {
@@ -568,6 +578,7 @@ export class Game {
     }
     if (z.def.armor && !NO_ARMOR.has(kind)) dmg *= 1 - z.def.armor;
     if (z.rally > 0) dmg *= 0.6;
+    if ((z.boss || z.mini) && p && GUN_KILLS.has(kind)) dmg *= FORGE_BOSS[this.curWeapon(p).forged];
     if (this.instakill > 0 && !z.boss && !z.mini) dmg = Math.max(dmg, z.hp + 1);
     z.hp -= dmg;
     z.hurtT = 0.12;
@@ -1483,7 +1494,7 @@ export class Game {
     }
     const speed = def.fixedHp
       ? def.speed * this.diff.speed
-      : def.speed * this.diff.speed * (0.9 + this.rng() * 0.2) * (1 + Math.min(0.45, 0.025 * (this.wave - 1)));
+      : Math.min(ZOMBIE_SPEED_CAP, def.speed * this.diff.speed * (0.9 + this.rng() * 0.2) * (1 + Math.min(0.45, 0.025 * (this.wave - 1))));
     const zb = {
       id: this.nextId++, type, def, x, z, r: def.radius, cr: Math.min(def.radius, 0.45), ang: this.rng() * Math.PI * 2,
       hp, maxHp: hp, speed, damage: def.damage * this.diff.damage,
@@ -2115,7 +2126,7 @@ export class Game {
                   done = true;
                 } else {
                   this.damageZombie(z, pr.dmg, pr.pid, 'bullet');
-                  if (pr.kind === 'ray') this.emit({ k: 'rayhit', x: pr.x, z: pr.z, f: pr.forged ? 1 : 0 });
+                  if (pr.kind === 'ray') this.emit({ k: 'rayhit', x: pr.x, z: pr.z, f: pr.forged || 0 });
                   pr.lastHit = z.id;
                   pr.dmg *= 0.85;
                   done = --pr.pierce <= 0;
@@ -2365,7 +2376,7 @@ export class Game {
         z.id, ZTYPES.indexOf(z.type), r2(z.x), r2(z.z), r2(z.ang), r2(z.hp / z.maxHp),
         ZSTATE[z.stun > 0 ? 'stun' : z.state] ?? 1, r2(z.state === 'rise' ? z.t : 0), (z.burn > 0 ? 1 : 0) | (z.hurtT > 0 ? 2 : 0) | (z.buff > 0 ? 4 : 0) | (z.enraged ? 8 : 0) | (z.rally > 0 ? 16 : 0),
       ]),
-      R: this.projs.map((p) => [p.id, p.kind, r2(p.x), r2(p.y), r2(p.z), p.kind === 'hook' ? p.zid : p.forged ? 1 : 0]),
+      R: this.projs.map((p) => [p.id, p.kind, r2(p.x), r2(p.y), r2(p.z), p.kind === 'hook' ? p.zid : p.forged || 0]),
       S: this.structs.map((s) => ({
         id: s.id, k: s.kind, o: s.owner, x: r2(s.x), z: r2(s.z), c: s.cells, hp: r2(s.hp / s.maxHp), a: r2(s.ang || 0),
         l: s.lvl, sp: s.spikes ? 1 : 0, lf: s.kind === 'turret' ? r2(s.life / s.maxLife) : 1,

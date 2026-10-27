@@ -6,7 +6,7 @@ export const ZOMBIES = {
     color: 0x6b8f5e, shirt: 0x5a4a3a, points: 60, scale: 1,
   },
   runner: {
-    name: 'Runner', hp: 75, speed: 4.8, damage: 20, attackRate: 0.9, radius: 0.4,
+    name: 'Runner', hp: 75, speed: 3.9, damage: 20, attackRate: 0.9, radius: 0.4,
     color: 0x9ab07a, shirt: 0x6a2a2a, points: 70, scale: 0.92,
   },
   crawler: {

@@ -1,38 +1,42 @@
 // Keyboard + mouse state. sample() builds the per-frame input object for the sim.
-const ACTION_KEYS = {
-  KeyR: 'reload',
-  KeyQ: 'swap',
-  KeyF: 'ability',
-  KeyG: 'grenade',
-  KeyV: 'melee',
-  KeyE: 'usePress',
-};
+import { resolveBinds, normCode } from './keybinds.js';
+
+// bound actions that fire once per key press (the sim's `acts`)
+const PRESS_ACTS = { reload: 'reload', swap: 'swap', ability: 'ability', grenade: 'grenade', melee: 'melee', use: 'usePress' };
 
 export class Input {
-  constructor(target) {
+  // binds: action id -> key code (see keybinds.js); defaults when omitted
+  constructor(target, binds = resolveBinds()) {
     this.target = target;
+    this.binds = binds;
+    // key code -> press action, built once so a key event is a single lookup
+    this.actByCode = {};
+    for (const id in PRESS_ACTS) this.actByCode[binds[id]] = PRESS_ACTS[id];
     this.keys = new Set();
     this.mouse = { x: window.innerWidth / 2, y: window.innerHeight / 2, left: false };
     this.acts = {};
     this.enabled = true;
     this.handlers = {};
     this.onWheel = null;
-    this.onKey = null;
+    this.onKey = null; // (event, normalized code) -> true if handled (keydown and keyup)
     const on = (type, fn, el = window) => {
       el.addEventListener(type, fn);
       this.handlers[type] = [el, fn];
     };
     on('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
-      if (e.code === 'Tab') e.preventDefault();
-      if (this.onKey && this.onKey(e)) return;
+      const code = normCode(e.code);
+      if (code === 'Tab' || code === binds.score) e.preventDefault();
+      if (this.onKey && this.onKey(e, code)) return;
       if (!this.enabled) return;
-      if (!e.repeat && ACTION_KEYS[e.code]) this.acts[ACTION_KEYS[e.code]] = true;
-      this.keys.add(e.code);
+      const act = this.actByCode[code];
+      if (act && !e.repeat) this.acts[act] = true;
+      this.keys.add(code);
     });
     on('keyup', (e) => {
-      this.keys.delete(e.code);
-      if (this.onKey && e.code === 'Tab') this.onKey(e);
+      const code = normCode(e.code);
+      this.keys.delete(code);
+      if (this.onKey) this.onKey(e, code);
     });
     on('blur', () => {
       this.keys.clear();
@@ -58,14 +62,11 @@ export class Input {
     for (const [type, [el, fn]] of Object.entries(this.handlers)) el.removeEventListener(type, fn);
   }
 
-  down(...codes) {
-    return codes.some((c) => this.keys.has(c));
-  }
-
-  // aim: world point under the cursor
+  // aim: world point under the cursor. Arrow keys always move too.
   sample(aim) {
-    const mx = (this.down('KeyD', 'ArrowRight') ? 1 : 0) - (this.down('KeyA', 'ArrowLeft') ? 1 : 0);
-    const mz = (this.down('KeyS', 'ArrowDown') ? 1 : 0) - (this.down('KeyW', 'ArrowUp') ? 1 : 0);
+    const k = this.keys, b = this.binds;
+    const mx = (k.has(b.right) || k.has('ArrowRight') ? 1 : 0) - (k.has(b.left) || k.has('ArrowLeft') ? 1 : 0);
+    const mz = (k.has(b.down) || k.has('ArrowDown') ? 1 : 0) - (k.has(b.up) || k.has('ArrowUp') ? 1 : 0);
     const acts = this.acts;
     this.acts = {};
     if (!this.enabled) return { mx: 0, mz: 0, ax: aim ? aim.x : 0, az: aim ? aim.z : 0, fire: false, sprint: false, use: false, acts: {} };
@@ -75,8 +76,8 @@ export class Input {
       ax: aim ? aim.x : 0,
       az: aim ? aim.z : 0,
       fire: this.mouse.left,
-      sprint: this.down('ShiftLeft', 'ShiftRight'),
-      use: this.down('KeyE'),
+      sprint: k.has(b.sprint),
+      use: k.has(b.use),
       acts,
     };
   }

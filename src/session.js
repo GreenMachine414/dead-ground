@@ -7,10 +7,12 @@ import { WEAPONS } from './data/weapons.js';
 import { Renderer } from './render/renderer.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
+import { resolveBinds } from './keybinds.js';
 
 const STEP = 1 / 60;
 const SNAP_INTERVAL = 50; // ms
 const INPUT_INTERVAL = 33; // ms
+const DIGITS = { Digit1: 1, Digit2: 2, Digit3: 3, Numpad1: 1, Numpad2: 2, Numpad3: 3 };
 
 export class Session {
   constructor(app, opts) {
@@ -59,9 +61,11 @@ export class Session {
     this.hud = new Hud(hudRoot);
     this.hud.setWorld(this.world, this.map);
     this.hud.onPick = (i) => this.pick(i);
-    this.input = new Input(window);
+    this.binds = resolveBinds(this.app.profile.settings.keys);
+    this.hud.setKeys(this.binds);
+    this.input = new Input(window, this.binds);
     this.input.onWheel = (s) => (this.renderer.zoom = Math.max(0.65, Math.min(1.5, this.renderer.zoom + s * 0.08)));
-    this.input.onKey = (e) => this.onKey(e);
+    this.input.onKey = (e, code) => this.onKey(e, code);
     this.last = performance.now();
     this.running = true;
     this.app.audio.startMusic(this.map.id);
@@ -89,16 +93,25 @@ export class Session {
     document.getElementById('game').style.display = 'none';
   }
 
-  onKey(e) {
-    if (e.code === 'Escape' && e.type === 'keydown' && !e.repeat) {
-      this.app.togglePause();
+  // code: e.code with left/right modifiers merged (see keybinds.js). Called on keydown and keyup.
+  onKey(e, code) {
+    const down = e.type === 'keydown';
+    if (code === 'Escape' && down && !e.repeat) {
+      // Esc closes the big map first, then works as pause
+      if (this.hud.showMap) this.hud.showMap = false;
+      else this.app.togglePause();
       return true;
     }
-    if (e.code === 'Tab') {
-      if (this.hud) this.hud.showScore = e.type === 'keydown';
+    if (code === this.binds.score) {
+      this.hud.showScore = down;
+      return true;
     }
-    const digit = { Digit1: 1, Digit2: 2, Digit3: 3, Numpad1: 1, Numpad2: 2, Numpad3: 3 }[e.code];
-    if (digit && e.type === 'keydown' && !e.repeat) {
+    if (code === this.binds.map) {
+      if (down && !e.repeat) this.hud.showMap = !this.hud.showMap;
+      return true;
+    }
+    const digit = DIGITS[code];
+    if (digit && down && !e.repeat) {
       const me = this.snap && this.snap.P.find((p) => p.id === this.localId);
       if (me && me.chs) {
         this.pick(digit);

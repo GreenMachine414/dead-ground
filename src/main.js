@@ -9,6 +9,7 @@ import { Session } from './session.js';
 import { measureRefresh } from './render/renderer.js';
 import { esc } from './hud.js';
 import { runSmoke } from './smoke.js';
+import { BINDS, RESERVED, resolveBinds, keyName, normCode } from './keybinds.js';
 import { runPerf } from './perf.js';
 import { MenuBackdrop } from './menubg.js';
 
@@ -65,6 +66,7 @@ class App {
   show(name) {
     $$('.screen').forEach((s) => s.classList.toggle('active', s.id === 'screen-' + name));
     this.screen = name;
+    if (this.keyListen) this.keyListen();
     if (!this.session) {
       this.audio.startMusic('menu');
       if (this.backdrop) this.backdrop.start();
@@ -72,6 +74,7 @@ class App {
     if (name === 'main') this.renderMain();
     if (name === 'chars') this.renderUpgrades();
     if (name === 'settings') this.renderSettings();
+    if (name === 'howto') this.renderHowto();
   }
 
   hideScreens() {
@@ -146,6 +149,15 @@ class App {
     $('#set-shake').addEventListener('change', (e) => this.setSetting('shake', e.target.checked));
     $('#set-graphics').addEventListener('change', (e) => this.setSetting('graphics', e.target.value));
     $('#set-fullscreen').addEventListener('change', (e) => this.setFullscreen(e.target.checked));
+    $('#set-keys').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-bind]');
+      if (btn) this.listenKey(btn);
+    });
+    $('#set-keys-reset').addEventListener('click', () => {
+      this.setSetting('keys', {});
+      this.renderKeys();
+      this.toast('Controls reset to defaults');
+    });
     $('#set-reset').addEventListener('click', () => {
       if (!confirm('Reset all progress, upgrades and salvage? This cannot be undone.')) return;
       const keep = this.profile.settings;
@@ -167,6 +179,58 @@ class App {
     $('#set-shake').checked = s.shake;
     $('#set-fullscreen').checked = s.fullscreen;
     $('#set-graphics').value = s.graphics;
+    this.renderKeys();
+  }
+
+  // ---------------------------------------------------------------- controls
+  renderKeys() {
+    const binds = resolveBinds(this.profile.settings.keys);
+    $('#set-keys').innerHTML = BINDS.map((b) => `<span>${b.label}</span><button data-bind="${b.id}">${esc(keyName(binds[b.id]))}</button>`).join('');
+  }
+
+  // wait for the next key press and bind it to the button's action
+  listenKey(btn) {
+    if (this.keyListen) this.keyListen();
+    btn.classList.add('listening');
+    btn.textContent = 'Press a key…';
+    const id = btn.dataset.bind;
+    const onDown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const code = normCode(e.code);
+      stop();
+      if (code === 'Escape') return;
+      if (RESERVED.has(code)) return this.toast(`${keyName(code)} can't be rebound`);
+      this.rebind(id, code);
+    };
+    const stop = () => {
+      window.removeEventListener('keydown', onDown, true);
+      this.keyListen = null;
+      this.renderKeys();
+    };
+    window.addEventListener('keydown', onDown, true);
+    this.keyListen = stop;
+  }
+
+  // a key already used by another action swaps the two; only changes from the defaults are saved
+  rebind(id, code) {
+    const binds = resolveBinds(this.profile.settings.keys);
+    const other = BINDS.find((b) => b.id !== id && binds[b.id] === code);
+    if (other) binds[other.id] = binds[id];
+    binds[id] = code;
+    const keys = {};
+    for (const b of BINDS) if (binds[b.id] !== b.def) keys[b.id] = binds[b.id];
+    this.setSetting('keys', keys);
+    this.renderKeys();
+    if (other) this.toast(`${other.label} moved to ${keyName(binds[other.id])}`);
+  }
+
+  // How to Play shows the player's current keys
+  renderHowto() {
+    const names = resolveBinds(this.profile.settings.keys);
+    for (const td of $$('[data-k]')) {
+      td.textContent = td.dataset.k.split(',').map((id) => keyName(names[id])).join(' ') + (td.dataset.kSuffix || '');
+    }
   }
 
   // on: true/false, or undefined to toggle (F11). Remembered for the next launch.

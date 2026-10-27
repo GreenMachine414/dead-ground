@@ -1,6 +1,6 @@
 // 2D canvas renderer with a soft, hand-drawn top-down RPG look.
 // World units map to screen pixels; things with height are drawn shifted upward (3/4 view).
-import { WEAPONS, RARITY } from '../data/weapons.js';
+import { WEAPONS, RARITY, FORGE, FORGE2 } from '../data/weapons.js';
 import { ZOMBIES, PERKS, POWERUPS } from '../data/zombies.js';
 import { CONTAINERS } from '../data/loot.js';
 import { BOONS } from '../data/boons.js';
@@ -21,6 +21,25 @@ const ANIMATED = new Set(['windmill', 'fountain', 'campfire', 'console', 'reacto
 const SHARED = new Set(['tree', 'bush', 'rock']);
 const SPRITE_BUILDS_PER_FRAME = 24;
 const QUALITY = { high: 1, low: 0.6 };
+// Forge looks per level (index = level): X violet, XX crimson. Both get the same treatment:
+// `hot` is the bright tracer / lightning core, `dust` the sparkle colours around the gun (normal
+// blending, so they still read on bright ground like sand and snow), `aura` the glow and pulse ring.
+// XX, the max level, sparkles faster (`dustEvery`, seconds between motes at full quality).
+const FORGE_FX = [
+  null,
+  {
+    flame: '#c46aff', muzzle: '#e0a0ff', flash: '#c080ff', tracer: '#b060ff', ray: '#ff6aff', bolt: '#b070ff', hot: '#f0dcff',
+    dust: ['#6a1ab8', '#9b59d0', '#b070ff', '#d8a8ff'], aura: '#b070ff', dustEvery: 0.04,
+  },
+  {
+    flame: '#ff2a3a', muzzle: '#ffb0a8', flash: '#ff3a3a', tracer: '#ff2a3a', ray: '#ff2a4a', bolt: '#ff2a3a', hot: '#ffd6cc',
+    dust: ['#e0102a', '#ff2a3a', '#ff4a3a', '#ff9a8a'], aura: '#ff2a3a', dustEvery: 0.03,
+  },
+];
+const DUST_FLARE = 0.2; // share of motes that are big flares with a white-hot glint
+const DUST_PULSE = 1.4; // seconds between ground pulse rings
+// machine names fade in from this many units away; the price joins the name within LABEL_DETAIL
+const LABEL_NEAR = 9, LABEL_DETAIL = 4, LABEL_FADE = 1.5;
 
 // Display refresh interval, measured once at startup while the menu is idle, so the
 // auto-quality logic knows what frame rate this screen can actually show.
@@ -68,6 +87,7 @@ export class Renderer {
     this.spriteU = 0;
     this.zoomedAt = 0;
     this.textW = new Map();
+    this.forgeDetailFn = () => this.forgeDetail(); // bound once, passed to machineLabel each frame
     this.glowSprites = new Map();
     this.shake = 0;
     this.shakeEnabled = true;
@@ -1124,7 +1144,7 @@ export class Renderer {
         c.fillStyle = 'rgba(0,0,0,0.4)';
         c.fill();
         this.glowAt(o.x, o.z, 2.5, col, 0.25);
-        this.label(o.x, o.z, 2.8, `${pk.name} · ${pk.cost}`, col, 4);
+        this.machineLabel(o.x, o.z, 2.8, pk.name, pk.cost, col);
         return;
       }
       case 'shop': {
@@ -1150,7 +1170,7 @@ export class Renderer {
         c.closePath();
         S.fillStroke(c, '#d2a8ff', OUT, u * 0.045);
         this.glowAt(o.x, o.z - 1, 2.8, '#b07cff', 0.4);
-        this.label(o.x, o.z, 4.1, 'Upgrade Machine', '#d2a8ff', 4);
+        this.machineLabel(o.x, o.z, 4.1, 'Upgrade Machine', null, '#d2a8ff');
         return;
       }
       case 'forge': {
@@ -1161,7 +1181,7 @@ export class Renderer {
         c.fill();
         this.glowAt(o.x, o.z, 3, '#ff8a3a', 0.35);
         if (Math.random() < 0.2) this.emit(o.x + (Math.random() - 0.5), o.z, 0.8, 0, 0, 1.5, '#ffb050', 0.8, 0.06, { glow: true });
-        this.label(o.x, o.z, 2.2, 'Weapon Forge', '#ffaa60', 4);
+        this.machineLabel(o.x, o.z, 2.2, 'Weapon Forge', this.forgeDetailFn, '#ffaa60');
         return;
       }
       case 'station': {
@@ -1393,7 +1413,7 @@ export class Renderer {
       c.drawImage(gs.canvas, X - gs.len / 2, gy - gs.canvas.height / 2);
       if (state === 'offer') this.label(bs.x, bs.z - 0.5, 3.2, `${RARITY[rarity].name} ${WEAPONS[wid].name}`, S.rarityColor(rarity), 6);
     } else if (state === 'idle') {
-      this.label(bs.x, bs.z - 0.5, 1.9, 'Mystery Box · 950', '#a8d4ff', 4);
+      this.machineLabel(bs.x, bs.z - 0.5, 1.9, 'Mystery Box', 950, '#a8d4ff');
     }
   }
 
@@ -1407,9 +1427,37 @@ export class Renderer {
       ...look, aim: o.a, walk: o.walk, moving: o.moving && p.s === 0, time: this.time, gun: p.s === 0 && w ? w[0] : null, forged: w && w[1],
       down: p.s === 1, alpha: flicker ? 0.45 : 1,
     });
+    if (p.s === 0 && w && w[1]) this.gunDust(o, FORGE_FX[w[1]]);
     if (p.id !== view.localId) {
       const tag = p.s === 1 ? `${p.n} — DOWN ${Math.ceil(p.bl)}s` : p.n;
       this.label(o.x, o.z, 2.9, tag, p.s === 1 ? '#ff8070' : '#a8d4ff', 999, p.hp / p.mh);
+    }
+  }
+
+  // Forged-gun aura (fx = FORGE_FX[level]): a breathing glow on the gun, sparks swirling up around
+  // it with the odd big flare (solid star + hot glint), and a pulse ring on the ground. One spark per
+  // fx.dustEvery at most (fewer at lower render quality), so the cost is flat per forged player.
+  gunDust(o, fx) {
+    const t = this.time;
+    const gx = o.x + Math.cos(o.a) * 0.55, gz = o.z + Math.sin(o.a) * 0.55;
+    this.glowAt(gx, gz, 1.8 + Math.sin(t * 5) * 0.4, fx.aura, 0.4);
+    if (t - (o.pulseT || 0) > DUST_PULSE) {
+      o.pulseT = t;
+      this.rings.push({ x: o.x, z: o.z, r0: 0.3, r1: 1.7, col: fx.aura, life: 0.8, max: 0.8, w: 0.07, flat: true });
+    }
+    if (t - (o.dustT || 0) < fx.dustEvery / this.quality) return;
+    o.dustT = t;
+    const r = 0.2 + Math.random() * 0.4, a = Math.random() * Math.PI * 2;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const x = gx + ca * r, z = gz + sa * r * 0.6, h = 0.7 + Math.random() * 0.5;
+    // tangential plus a little outward drift, so the motes swirl around the gun as they rise
+    const vx = -sa * 1.1 + ca * 0.25, vz = ca * 0.7 + sa * 0.15, vh = 0.5 + Math.random() * 0.6;
+    if (Math.random() < DUST_FLARE) {
+      const life = 0.9 + Math.random() * 0.4;
+      this.emit(x, z, h, vx, vz, vh, fx.aura, life, 0.17 + Math.random() * 0.06, { drag: 1.2, shape: 'spark' });
+      this.emit(x, z, h, vx, vz, vh, fx.hot, life, 0.07, { drag: 1.2, shape: 'spark', glow: true });
+    } else {
+      this.emit(x, z, h, vx, vz, vh, fx.dust[(Math.random() * fx.dust.length) | 0], 0.6 + Math.random() * 0.6, 0.07 + Math.random() * 0.06, { drag: 1.5, shape: 'spark' });
     }
   }
 
@@ -1648,7 +1696,7 @@ export class Renderer {
     for (const [, kind, x, y, z, forged] of snap.R) {
       const X = this.sx(x), Y = this.sy(z) - y * K * u;
       const spec = {
-        frag: ['#4a5a3a', 0.15], grenade: ['#5a6a3a', 0.18], ray: [forged ? '#ff6aff' : '#6aff8a', 0.2], bolt: ['#ff5a4a', 0.14],
+        frag: ['#4a5a3a', 0.15], grenade: ['#5a6a3a', 0.18], ray: [forged ? FORGE_FX[forged].ray : '#6aff8a', 0.2], bolt: [forged ? FORGE_FX[forged].tracer : '#ff5a4a', 0.14],
         spit: ['#8aff4a', 0.24], rock: ['#8a7058', 0.45], rocket: ['#d8d8d8', 0.18], hook: ['#c8ccd2', 0.22],
       }[kind] || ['#ffffff', 0.15];
       if (kind === 'hook') {
@@ -1672,7 +1720,8 @@ export class Renderer {
         c.fill();
         this.emit(x, z, y, 0, 0, 0, spec[0], 0.25, spec[1] * 0.8, { glow: true });
       } else if (kind === 'rocket' || kind === 'grenade') {
-        this.emit(x, z, y, 0, 0, 0.3, '#b8b8b8', 0.5, 0.18, { grow: 1.5 });
+        const hot = forged && kind === 'grenade'; // a forged launcher's shell trails coloured smoke
+        this.emit(x, z, y, 0, 0, 0.3, hot ? FORGE_FX[forged].tracer : '#b8b8b8', 0.5, 0.18, { grow: 1.5, glow: hot });
       }
       S.circle(c, X, Y, u * spec[1]);
       S.fillStroke(c, spec[0], OUT, u * 0.03);
@@ -1685,17 +1734,23 @@ export class Renderer {
     c.lineCap = 'round';
     for (const t of this.tracers) {
       const f = t.life / t.max;
+      const x1 = this.sx(t.x1), y1 = this.sy(t.z1) - u * 0.65, x2 = this.sx(t.x2), y2 = this.sy(t.z2) - u * 0.65;
       c.strokeStyle = S.rgba(t.col, f);
-      c.lineWidth = u * 0.06 * (0.5 + f);
+      c.lineWidth = u * (t.hot ? 0.1 : 0.06) * (0.5 + f);
       c.beginPath();
-      c.moveTo(this.sx(t.x1), this.sy(t.z1) - u * 0.65);
-      c.lineTo(this.sx(t.x2), this.sy(t.z2) - u * 0.65);
+      c.moveTo(x1, y1);
+      c.lineTo(x2, y2);
       c.stroke();
+      if (t.hot) {
+        c.strokeStyle = S.rgba(t.hot, f);
+        c.lineWidth = u * 0.03 * (0.5 + f);
+        c.stroke();
+      }
     }
     // lightning
     for (const b of this.bolts) {
       const f = b.life / b.max;
-      for (const [col, w] of [[S.rgba(b.col || '#78beff', f), 0.16], ['rgba(255,255,255,' + f + ')', 0.06]]) {
+      for (const [col, w] of [[S.rgba(b.col || '#78beff', f), 0.16], [b.core ? S.rgba(b.core, f) : 'rgba(255,255,255,' + f + ')', 0.06]]) {
         c.strokeStyle = col;
         c.lineWidth = u * w;
         c.beginPath();
@@ -1742,6 +1797,14 @@ export class Renderer {
       S.ellipse(c, 0, 0, size, size * 0.5);
       c.fill();
       c.restore();
+      return;
+    }
+    if (p.shape === 'spark') {
+      // twinkling 4-point glint: two thin bars, alpha flickering per particle
+      c.globalAlpha = Math.min(1, f * 1.6) * (0.55 + 0.45 * Math.sin(p.life * 40 + p.x * 13));
+      const s = Math.max(1, size * 0.35);
+      c.fillRect(X - size * 1.6, Y - s / 2, size * 3.2, s);
+      c.fillRect(X - s / 2, Y - size * 1.6, s, size * 3.2);
       return;
     }
     if (p.shape === 'streak') {
@@ -1848,10 +1911,32 @@ export class Renderer {
     const d = Math.hypot(this.me.x - x, this.me.z - z);
     if (near < 900 && d > near) return;
     if (excl) {
-      if (!this.exclLabel || d < this.exclLabel.d) this.exclLabel = { d, l: [x, z, h, text, col, hpFrac] };
+      if (!this.exclLabel || d < this.exclLabel.d) this.exclLabel = { d, l: [x, z, h, text, col, hpFrac, 1] };
       return;
     }
-    (this.labelQueue || (this.labelQueue = [])).push([x, z, h, text, col, hpFrac]);
+    (this.labelQueue || (this.labelQueue = [])).push([x, z, h, text, col, hpFrac, 1]);
+  }
+
+  // Name tag for a machine (perks, forge, box...): fades in from LABEL_NEAR away so players can
+  // tell what it is from a distance; `detail` (price) is added once they're within LABEL_DETAIL.
+  // `detail` may be a function so its text is only built when it's actually shown.
+  machineLabel(x, z, h, name, detail, col) {
+    if (!this.me) return;
+    const d = Math.hypot(this.me.x - x, this.me.z - z);
+    if (d > LABEL_NEAR) return;
+    let text = name;
+    if (detail && d <= LABEL_DETAIL) text += ' · ' + (typeof detail === 'function' ? detail() : detail);
+    (this.labelQueue || (this.labelQueue = [])).push([x, z, h, text, col, undefined, Math.min(1, (LABEL_NEAR - d) / LABEL_FADE)]);
+  }
+
+  // what the local player's current gun would get from the forge
+  forgeDetail() {
+    const p = this.me && this.me.p;
+    const w = p && (p.w[p.cw] || p.w[0]);
+    if (!w || !w[1]) return `X ${FORGE.cost}`;
+    if (w[1] >= 2) return 'max level';
+    const left = FORGE2.kills - (w[7] || 0);
+    return left > 0 ? `XX ${FORGE2.cost} + ${left} kills` : `XX ${FORGE2.cost}`;
   }
 
   drawOverlayUI(snap, view) {
@@ -1864,7 +1949,8 @@ export class Renderer {
     const labels = this.labelQueue || [];
     if (this.exclLabel) labels.push(this.exclLabel.l);
     this.exclLabel = null;
-    for (const [x, z, h, text, col, hpFrac] of labels) {
+    for (const [x, z, h, text, col, hpFrac, alpha] of labels) {
+      c.globalAlpha = alpha;
       const X = this.sx(x), Y = this.sy(z) - h * u * K * 1.25;
       const wk = fs + '|' + text;
       let tw = this.textW.get(wk);
@@ -1885,7 +1971,8 @@ export class Renderer {
         c.fill();
       }
     }
-    this.labelQueue = [];
+    c.globalAlpha = 1;
+    labels.length = 0; // reuse the queue array next frame
     // floating texts (damage numbers etc.)
     for (const t of this.texts) {
       const f = t.life / t.max;
@@ -1953,22 +2040,26 @@ export class Renderer {
     switch (e.k) {
       case 'fire': {
         const w = WEAPONS[WIDS[e.w]];
+        const fx = FORGE_FX[e.f];
         const mx = e.x + Math.cos(e.a) * w.len * 0.7, mz = e.z + Math.sin(e.a) * w.len * 0.7;
         if (w.type === 'flame') {
           for (let i = 0; i < 4; i++) {
             const a = e.a + (Math.random() - 0.5) * 0.6, s = 8 + Math.random() * 5;
-            this.emit(mx, mz, 0.9, Math.cos(a) * s, Math.sin(a) * s, 0.3, Math.random() < 0.4 ? '#ffe070' : e.f ? '#c46aff' : '#ff7a2a', 0.5, 0.2, { grow: 2.2, drag: 2.2, glow: true });
+            this.emit(mx, mz, 0.9, Math.cos(a) * s, Math.sin(a) * s, 0.3, Math.random() < 0.4 ? '#ffe070' : fx ? fx.flame : '#ff7a2a', 0.5, 0.2, { grow: 2.2, drag: 2.2, glow: true });
           }
         } else {
-          this.emit(mx, mz, 0.95, 0, 0, 0, e.f ? '#e0a0ff' : '#fff0b0', 0.06, 0.35, { glow: true });
+          this.emit(mx, mz, 0.95, 0, 0, 0, fx ? fx.muzzle : '#fff0b0', 0.06, 0.35, { glow: true });
           if (w.type !== 'chain') this.emit(e.x, e.z, 0.9, -Math.sin(e.a) * 2, Math.cos(e.a) * 2, 2, '#e0b040', 0.7, 0.06, { g: 12 });
+          // forged: a couple of sparks kick out of the muzzle
+          if (fx) this.burst(mx, mz, 0.95, 2, fx.dust, 3, 0.3, 0.07, { drag: 4, shape: 'spark' });
         }
-        this.flashes.push({ x: mx, z: mz, r: 3, col: e.f ? '#c080ff' : w.type === 'flame' ? '#ff8a3a' : '#ffd890', a: 0.6, life: 0.06, max: 0.06 });
+        this.flashes.push({ x: mx, z: mz, r: 3, col: fx ? fx.flash : w.type === 'flame' ? '#ff8a3a' : '#ffd890', a: 0.6, life: 0.06, max: 0.06 });
         break;
       }
       case 't': {
-        const col = e.w < 0 ? '#9fdcff' : e.f ? '#d080ff' : S.hex(WEAPONS[WIDS[e.w]].color);
-        this.tracers.push({ x1: e.x, z1: e.z, x2: e.x2, z2: e.z2, col, life: 0.08, max: 0.08 });
+        const fx = FORGE_FX[e.f];
+        const col = e.w < 0 ? '#9fdcff' : fx ? fx.tracer : S.hex(WEAPONS[WIDS[e.w]].color);
+        this.tracers.push({ x1: e.x, z1: e.z, x2: e.x2, z2: e.z2, col, hot: fx && fx.hot, life: 0.08, max: 0.08 });
         break;
       }
       case 'h':
@@ -2008,6 +2099,7 @@ export class Renderer {
         if (e.big) this.shake = Math.min(1.5, this.shake + 0.8);
         break;
       case 'zap': {
+        const fx = FORGE_FX[e.f];
         for (let i = 0; i + 3 < e.pts.length; i += 2) {
           const pts = [];
           const x1 = e.pts[i], z1 = e.pts[i + 1], x2 = e.pts[i + 2], z2 = e.pts[i + 3];
@@ -2016,9 +2108,9 @@ export class Renderer {
             const t = k / n, j = k === 0 || k === n ? 0 : 0.4;
             pts.push([x1 + (x2 - x1) * t + (Math.random() - 0.5) * j, z1 + (z2 - z1) * t + (Math.random() - 0.5) * j]);
           }
-          this.bolts.push({ pts, life: 0.22, max: 0.22 });
-          this.burst(x2, z2, 1, 5, '#b0e4ff', 4, 0.3, 0.08, { glow: true });
-          this.flashes.push({ x: x2, z: z2, r: 2.5, col: '#8fd0ff', a: 0.7, life: 0.2, max: 0.2 });
+          this.bolts.push({ pts, life: 0.22, max: 0.22, col: fx && fx.bolt, core: fx && fx.hot });
+          this.burst(x2, z2, 1, 5, fx ? fx.muzzle : '#b0e4ff', 4, 0.3, 0.08, { glow: true });
+          this.flashes.push({ x: x2, z: z2, r: 2.5, col: fx ? fx.flash : '#8fd0ff', a: 0.7, life: 0.2, max: 0.2 });
         }
         break;
       }
@@ -2101,7 +2193,7 @@ export class Renderer {
         break;
       case 'rayhit': {
         // plasma splash: a quick bright ring and sparks, no explosion
-        const col = e.f ? '#ff6aff' : '#6aff8a';
+        const col = e.f ? FORGE_FX[e.f].ray : '#6aff8a';
         this.rings.push({ x: e.x, z: e.z, r0: 1.1, r1: 0.15, col, life: 0.25, max: 0.25, w: 0.1 });
         this.burst(e.x, e.z, 1, 6, [col, '#e8ffe8'], 5, 0.25, 0.07, { drag: 6, glow: true });
         this.flashes.push({ x: e.x, z: e.z, r: 1.8, col, a: 0.6, life: 0.12, max: 0.12 });

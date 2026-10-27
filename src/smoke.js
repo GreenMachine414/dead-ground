@@ -3,6 +3,7 @@
 import { Game } from './game/sim.js';
 import { MAPS } from './data/maps.js';
 import { Net, PROTOCOL } from './net.js';
+import { resolveBinds } from './keybinds.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -56,6 +57,15 @@ export async function runSmoke(app) {
     await app.setFullscreen(false);
     await wait(500);
     check('fullscreen-off', app.profile.settings.fullscreen === false);
+    // controls: a key already in use swaps; the map key is rebound for the run (smoke never saves)
+    app.show('settings');
+    app.rebind('reload', 'KeyQ');
+    const kb = resolveBinds(app.profile.settings.keys);
+    check('rebind-swaps', kb.reload === 'KeyQ' && kb.swap === 'KeyR');
+    app.setSetting('keys', {});
+    app.rebind('map', 'KeyN');
+    await wait(200);
+    await shot('02b-settings');
 
     const chars = ['brick', 'sparks', 'mags', 'rook', 'volt'];
     for (const m of MAPS) {
@@ -98,6 +108,21 @@ export async function runSmoke(app) {
         await wait(500);
         await shot('map3-supply-bag');
         check('supply-bag-dropped', g.pickups.some((k) => k.kind === 'supply'));
+        // forged (X) gun: the same aura in violet
+        p.weapons[1] = g.makeWeapon('ar', 1, 2);
+        for (let i = 0; i < 4; i++) g.spawnZombie('walker', p.x + 6, p.z - 1.5 + i, false);
+        await wait(900);
+        await shot('map3-forge-x');
+        // fully forged (XX) gun: crimson finish, sparkling dust, red shots
+        p.weapons[1] = g.makeWeapon('ar', 2, 2);
+        for (let i = 0; i < 4; i++) g.spawnZombie('walker', p.x + 6, p.z - 1.5 + i, false);
+        await wait(900);
+        await shot('map3-forge-xx');
+        // XX Storm Caller: red chain lightning
+        p.weapons[1] = g.makeWeapon('tesla', 2, 2);
+        for (let i = 0; i < 4; i++) g.spawnZombie('walker', p.x + 5, p.z - 1.5 + i, false);
+        await wait(180);
+        await shot('map3-forge-xx-tesla');
       }
       if (m.id === 2) {
         // the upgrade machine and its prompt
@@ -106,9 +131,25 @@ export async function runSmoke(app) {
         p.z = shop.z + 3.5;
         await wait(400);
         await shot('map2-upgrade-machine');
+        p.x = shop.x;
         p.z = shop.z + 0.5;
+        // stand still for the check: the bot's wandering could carry us out of reach
+        const sample = s.input.sample;
+        s.input.sample = () => ({ ...sample(), mx: 0, mz: 0 });
         await wait(200);
+        s.input.sample = sample;
         check('upgrade-machine-prompt', /Upgrade Machine/.test(p.prompt));
+        // the full map opens on the rebound map key and closes on a second press
+        const key = (type) => window.dispatchEvent(new KeyboardEvent(type, { code: 'KeyN' }));
+        key('keydown');
+        key('keyup');
+        await wait(300);
+        await shot('map2-bigmap');
+        check('bigmap-opens', s.hud.showMap);
+        key('keydown');
+        key('keyup');
+        await wait(100);
+        check('bigmap-closes', !s.hud.showMap);
       }
       if (m.id === 1) {
         // level-up cards
@@ -152,6 +193,8 @@ export async function runSmoke(app) {
         app.endSession();
       }
     }
+
+    app.setSetting('keys', {});
 
     // ---------------- host networking over a real socket
     app.profile.settings.port = 27016;
