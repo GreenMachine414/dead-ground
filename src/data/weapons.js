@@ -8,7 +8,7 @@ export const WEAPONS = {
     ammoCost: 250, color: 0xffe08a, sound: 'pistol', len: 0.45, gunColor: 0x2a2a2a, boxWeight: 0,
   },
   revolver: {
-    name: 'Python .357', map: 1, type: 'hitscan', damage: 160, rate: 2.2, auto: false,
+    name: 'Python .357', map: 1, type: 'hitscan', damage: 112, rate: 2.2, auto: false,
     mag: 6, reserve: 54, reload: 2.0, spread: 0.01, range: 36, pierce: 3,
     ammoCost: 500, color: 0xffd060, sound: 'revolver', len: 0.55, gunColor: 0x8a8a90, boxWeight: 8,
   },
@@ -33,7 +33,7 @@ export const WEAPONS = {
     ammoCost: 1000, color: 0xff9040, sound: 'thump', len: 0.8, gunColor: 0x4a5a3a, boxWeight: 8,
   },
   sniper: {
-    name: 'Longshot .50', map: 3, type: 'hitscan', damage: 650, rate: 1.1, auto: false,
+    name: 'Longshot .50', map: 3, type: 'hitscan', damage: 150, rate: 1.1, auto: false,
     mag: 5, reserve: 40, reload: 2.8, spread: 0.0, range: 70, pierce: 8,
     ammoCost: 1000, color: 0xffffff, sound: 'sniper', len: 1.25, gunColor: 0x252a20, boxWeight: 7,
   },
@@ -48,13 +48,13 @@ export const WEAPONS = {
     ammoCost: 1300, color: 0xffd080, sound: 'rifle', len: 1.15, gunColor: 0x2e3328, boxWeight: 7,
   },
   raygun: {
-    name: 'Plasma Ray', map: 4, type: 'projectile', damage: 420, pierce: 3, rate: 3.2, auto: false,
+    name: 'Plasma Ray', map: 4, type: 'projectile', damage: 200, pierce: 3, rate: 3.2, auto: false,
     mag: 20, reserve: 160, reload: 2.2, spread: 0.01, range: 40, projSpeed: 40, proj: 'ray',
     ammoCost: 1500, color: 0x40ff60, sound: 'ray', len: 0.6, gunColor: 0xc0c8d0, boxWeight: 4,
   },
   tesla: {
-    name: 'Storm Caller', map: 5, type: 'chain', damage: 900, chain: 7, rate: 1.6, auto: false,
-    mag: 12, reserve: 72, reload: 2.8, spread: 0, range: 18,
+    name: 'Storm Caller', map: 5, type: 'chain', damage: 350, chain: 7, rate: 1.6, auto: false,
+    mag: 1, fixedMag: true, reserve: 72, reload: 2.5, spread: 0, range: 18,
     ammoCost: 1800, color: 0x80c8ff, sound: 'zap', len: 0.9, gunColor: 0x4a5a7a, boxWeight: 3,
   },
   minigun: {
@@ -63,16 +63,20 @@ export const WEAPONS = {
     ammoCost: 1800, color: 0xffc060, sound: 'smg', len: 1.2, gunColor: 0x3a3a3a, boxWeight: 4,
   },
   crossbow: {
-    name: 'Bolt Caster', map: 2, type: 'projectile', damage: 380, splash: 2.6, rate: 1.5, auto: false,
+    name: 'Bolt Caster', map: 2, type: 'projectile', damage: 100, splash: 2.6, rate: 1.5, auto: false,
     mag: 3, reserve: 30, reload: 2.2, spread: 0, range: 34, projSpeed: 30, proj: 'bolt',
     ammoCost: 900, color: 0xff4040, sound: 'thump', len: 0.85, gunColor: 0x5a4030, boxWeight: 6,
   },
 };
 
 // Pack-a-Punch style upgrade ("Weapon Forge")
-export const FORGE = { cost: 5000, damageMult: 2.2, magMult: 1.5, reserveMult: 1.5 };
+export const FORGE = { cost: 5000, magMult: 1.5, reserveMult: 1.5 };
 // Second forge level ("XX"): unlocked by getting `kills` kills with a forged gun; stacks on FORGE.
-export const FORGE2 = { cost: 10000, kills: 100, damageMult: 1.6, magMult: 1.25, reserveMult: 1.25 };
+export const FORGE2 = { cost: 10000, kills: 100, magMult: 1.25, reserveMult: 1.25 };
+// Fixed damage multiplier by forge level 0 / 1 (X) / 2 (XX), relative to the unforged gun
+export const FORGE_DMG = [1, 1.5, 2];
+// Bosses and mini-bosses only take half the forge damage bonus: per-level factor applied to their hits
+export const FORGE_BOSS = FORGE_DMG.map((m) => (1 + (m - 1) * 0.5) / m);
 
 export function weaponsForMap(mapId) {
   return Object.keys(WEAPONS).filter((k) => WEAPONS[k].map <= mapId);
@@ -93,17 +97,28 @@ export function rollRarity(rng, luck = 0, min = 0) {
   return rng.weighted(items, (i) => RARITY[i].weight * (1 + luck * i * i * 0.35));
 }
 
+// Stats are a pure function of (id, forge level, rarity), so each combination is built once and
+// shared (at most 13 x 3 x 5 entries). Callers must treat the result as read-only.
+const statsCache = new Map();
 export function weaponStats(id, forged, rarity = 0) {
   const w = WEAPONS[id];
   if (!forged && !rarity) return w;
+  const key = id + '|' + (+forged) + '|' + rarity;
+  let st = statsCache.get(key);
+  if (!st) statsCache.set(key, (st = buildStats(w, +forged, rarity)));
+  return st;
+}
+
+function buildStats(w, forged, rarity) {
   const r = RARITY[rarity] || RARITY[0];
   // forged is the forge level: 0, 1 (X) or 2 (XX)
   const k = (key) => (forged ? FORGE[key] : 1) * (forged >= 2 ? FORGE2[key] : 1);
   return {
     ...w,
     name: w.name + (forged >= 2 ? ' XX' : forged ? ' X' : ''),
-    damage: w.damage * k('damageMult') * r.dmg,
-    mag: Math.round(w.mag * k('magMult') * r.mag),
+    damage: w.damage * FORGE_DMG[forged] * r.dmg,
+    // fixedMag guns (Storm Caller: one shot per reload) keep their magazine at every level
+    mag: w.fixedMag ? w.mag : Math.round(w.mag * k('magMult') * r.mag),
     reserve: Math.round(w.reserve * k('reserveMult') * r.mag),
     reload: w.reload * r.reload,
     ammoCost: w.ammoCost * (forged ? 2 : 1),

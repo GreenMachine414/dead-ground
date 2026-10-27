@@ -41,8 +41,9 @@ Save data (progress, upgrades, settings) lives in `%APPDATA%\zombie-survival\pro
   - Mags: tosses supply bags that each teammate can grab once for ammo (passive: +25% reserve ammo)
 - **Loot:** guns aren't lying around. You find them by searching weapon racks, lockers, supply crates, car trunks, fallen survivors and toolboxes (hold E at the ✦ sparkle). Each gun rolls a rarity from Common to Legendary, which raises damage, magazine size and reload speed. Military chests always roll Rare or better, and searched containers sometimes restock between rounds.
 - **Upgrade Machine:** every map has one (purple diamond on the minimap). Pay points to choose 1 of 3 upgrades (1/2/3 or click); the price rises with each purchase and picks stack for the rest of the run. Solo play pauses while you choose. Upgrades include Aegis (recharging shield), Last Stand (self-revive), Overcharge (stronger ability) and Thorns. Kills still earn XP and levels, shown on the scoreboard.
-- **COD-style systems:** rounds, points, Mystery Box, 4 perk machines, debris doors, a Weapon Forge on maps 3–5 (pack-a-punch; a second "XX" level unlocks after 100 kills with the forged gun) and power-ups (Max Ammo, Insta-Kill, Double Points, Kaboom). Zombies claw up out of the ground when they spawn.
+- **COD-style systems:** rounds, points, Mystery Box, 4 perk machines, debris doors, a Weapon Forge on maps 3–5 (pack-a-punch: X costs 5000 and gives a violet finish with a sparkling aura and violet shots; XX costs 10000 and unlocks after 100 kills with the X gun, turning it all crimson; X deals ×1.5 and XX ×2 the gun's damage, and bosses take half the bonus) and power-ups (Max Ammo, Insta-Kill, Double Points, Kaboom). Machine names appear above them as you approach. Zombies claw up out of the ground when they spawn.
 - **Music:** a procedural melodic score with its own key, tempo and melody for each map. It stays calm while you explore, adds bass and drums during rounds, and builds further for bosses.
+- **Bug Reports/Feedback** (bottom right of the main menu): players write up to 1000 characters, which are emailed to the developer through Web3Forms. The address is stored on Web3Forms, not in the game. Vulgar language is blocked, there's a 30-second wait between sends, and players can reopen and edit their last 20 reports (each edit arrives as a new email with the same report number). Smoke runs never send.
 - **Co-op for up to 4 players.** Zombie count and health scale with the number of players. Downed players can be revived within 45 seconds. Solo players get one automatic "Second Wind" per game.
 
 ## Co-op
@@ -64,7 +65,9 @@ Settings → **Fullscreen** (or F11) switches to fullscreen and is remembered fo
 
 ## Controls
 
-WASD move · Mouse aim · Left click shoot · Shift sprint · R reload · Q / 1 / 2 swap weapon · 1 / 2 / 3 pick a level-up card · F or right click ability · G grenade · V knife · E interact (hold to search, revive or activate) · Tab scoreboard · Mouse wheel zoom · Esc pause · F11 fullscreen
+WASD move · Mouse aim · Left click shoot · Shift sprint · R reload · Q / 1 / 2 swap weapon · 1 / 2 / 3 pick a level-up card · F or right click ability · G grenade · V knife · E interact (hold to search, revive or activate) · Tab scoreboard · M map · Mouse wheel zoom · Esc pause · F11 fullscreen
+
+Every key except 1 / 2 / 3, Esc and F11 can be changed in Settings → Controls (arrow keys always move too).
 
 ## Code layout
 

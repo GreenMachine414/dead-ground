@@ -260,6 +260,89 @@ input[type='range'] {
 .profile-strip span b {
   color: var(--gold);
 }
+.bug-tab {
+  position: absolute;
+  right: 26px;
+  bottom: 24px;
+  font-size: 14px;
+  padding: 7px 14px;
+}
+
+/* bug reports */
+textarea {
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.45;
+  background: var(--parch);
+  color: var(--ink);
+  border: 3px solid var(--edge);
+  border-radius: 12px;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 120px;
+  user-select: text;
+}
+.bug-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.bug-row .big {
+  margin-left: auto;
+}
+#bug-status.err {
+  color: var(--berry);
+  font-weight: 700;
+}
+#bug-status.ok {
+  color: var(--leaf);
+  font-weight: 700;
+}
+#bug-count.near {
+  color: var(--orange);
+}
+.bug-mine {
+  max-width: 400px;
+}
+.bug-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.bug-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(36, 23, 15, 0.55);
+  border: 2px solid var(--edge);
+}
+.bug-item.editing {
+  border-color: var(--gold);
+}
+.bug-meta {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--gold);
+}
+.bug-snip {
+  grid-column: 1;
+  font-size: 14px;
+  color: var(--parch);
+  overflow-wrap: anywhere;
+}
+.bug-item button {
+  grid-row: 1 / 3;
+  grid-column: 2;
+  padding: 6px 12px;
+  font-size: 14px;
+}
 
 /* lobby */
 .lobby-grid {
@@ -332,6 +415,25 @@ input[type='range'] {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 10px;
+}
+.lobby-upgrade {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 16px;
+  font-size: 15px;
+}
+.lobup-next {
+  font-size: 13px;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+.lobup-buy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
 }
 .char-card {
   padding: 12px 8px;
@@ -524,6 +626,43 @@ select {
 .form label.check {
   flex-direction: row;
   align-items: center;
+}
+.settings-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 20px;
+}
+.settings-wrap .form {
+  align-self: flex-start;
+}
+.binds-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.form h3 {
+  margin: 0;
+  font-family: var(--display);
+  color: var(--gold);
+}
+.binds-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 14px;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--parch);
+}
+.binds-grid button {
+  min-width: 96px;
+  padding: 6px 12px;
+}
+.binds-grid button.listening {
+  background: linear-gradient(#f39a4c, #d9692c);
+  color: var(--cream);
 }
 .upgrade-grid {
   display: grid;
@@ -1082,6 +1221,8 @@ select {
 .prompt-bar div {
   height: 100%;
   background: var(--leaf);
+  transform-origin: 0 50%;
+  will-change: transform;
 }
 #hud .player {
   position: absolute;
@@ -1290,16 +1431,17 @@ select {
   font-size: 10px;
   margin-left: 1px;
 }
-/* upgrade machine picks: solid, readable cards between the bottom HUD panels */
+/* upgrade machine picks: three large cards in the middle of the screen, plain body font */
 #hud .levelup {
   position: absolute;
-  bottom: 64px;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   display: none;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 14px;
+  font-family: var(--font);
 }
 #hud .levelup.show {
   display: flex;
@@ -1311,87 +1453,88 @@ select {
   }
 }
 .lu-title {
-  font-family: var(--display);
-  font-size: 16px;
+  font-size: 19px;
+  font-weight: 600;
   color: var(--gold);
-  background: rgba(36, 23, 15, 0.85);
-  padding: 2px 14px;
-  border-radius: 10px;
+  background: rgba(36, 23, 15, 0.88);
+  padding: 6px 20px;
+  border-radius: 12px;
 }
 .lu-title span {
   color: var(--parch);
 }
 .lu-cards {
   display: flex;
-  gap: 12px;
+  gap: 22px;
   pointer-events: auto;
 }
 .lu-card {
   position: relative;
   box-sizing: border-box;
-  width: 200px;
-  padding: 8px 10px 8px 52px;
+  width: 270px;
+  min-height: 250px;
+  padding: 24px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
   background: linear-gradient(var(--parch), var(--parch2));
   color: var(--ink);
   border: 3px solid var(--edge);
-  border-left: 8px solid var(--c);
-  border-radius: 12px;
-  box-shadow: 0 4px 0 var(--edge);
+  border-top: 10px solid var(--c);
+  border-radius: 16px;
+  box-shadow: 0 6px 0 var(--edge), 0 12px 28px rgba(0, 0, 0, 0.35);
   cursor: pointer;
-  text-align: left;
+  text-align: center;
+  transition: transform 0.08s ease-out;
 }
 .lu-card:hover {
   background: var(--cream);
+  transform: translateY(-3px);
 }
 .lu-key {
   position: absolute;
-  top: -10px;
-  left: -12px;
-  width: 24px;
-  height: 24px;
+  top: -20px;
+  left: -14px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background: var(--wood);
   color: var(--gold);
-  border: 2px solid var(--edge);
-  font-family: var(--display);
-  font-size: 14px;
+  border: 3px solid var(--edge);
+  font-size: 18px;
+  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .lu-icon {
-  position: absolute;
-  left: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 34px;
-  height: 34px;
+  width: 66px;
+  height: 66px;
   border-radius: 50%;
   background: var(--c);
-  border: 2px solid var(--edge);
-  font-size: 18px;
+  border: 3px solid var(--edge);
+  font-size: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #1a1410;
 }
 .lu-name {
-  font-family: var(--display);
-  font-size: 17px;
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.2;
 }
-/* narrow windows: the cards would overlap the bottom panels, so lift them above */
-@media (max-width: 1440px) {
-  #hud .levelup {
-    bottom: 178px;
-  }
-  #hud .levelup.show ~ .prompt {
-    bottom: 290px;
-  }
+.lu-lvl {
+  margin-top: -6px;
+  font-size: 14px;
+  font-weight: 400;
+  color: #7a6450;
 }
 .lu-desc {
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.25;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.4;
   color: #4a3828;
 }
 #hud .weapon {
@@ -1442,6 +1585,10 @@ select {
 .w-reload .fill {
   background: linear-gradient(#ffe48a, #f2b13a);
   transition: none;
+  width: 100%;
+  border-radius: 0;
+  transform-origin: 0 50%;
+  will-change: transform;
 }
 #hud .vignette {
   position: absolute;
@@ -1482,6 +1629,42 @@ select {
 }
 #hud .scoreboard.show {
   display: block;
+}
+#hud .bigmap {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 12px 14px 14px;
+  display: none;
+}
+#hud .bigmap.show {
+  display: block;
+}
+.bigmap-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 8px;
+  font-weight: 800;
+}
+.bigmap-title {
+  font-family: var(--display);
+  font-size: 20px;
+  color: var(--gold);
+}
+.bigmap-hint {
+  font-size: 13px;
+  opacity: 0.75;
+  align-self: center;
+}
+.bigmap-cv {
+  display: block;
+  max-width: 88vw;
+  max-height: 78vh;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 3px solid var(--edge);
 }
 .scoreboard td,
 .scoreboard th {

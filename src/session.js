@@ -2,15 +2,17 @@
 //   solo   - local sim, no network
 //   host   - local sim, broadcasts snapshots to clients, applies their inputs
 //   client - renders host snapshots, predicts its own movement locally
-import { Game, createWorld, getMap, stepMovement, playerSpeed, WIDS } from './game/sim.js';
+import { Game, createWorld, getMap, stepMovement, playerSpeed, WIDS, mergeActs, swapTarget } from './game/sim.js';
 import { WEAPONS } from './data/weapons.js';
 import { Renderer } from './render/renderer.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
+import { resolveBinds } from './keybinds.js';
 
 const STEP = 1 / 60;
 const SNAP_INTERVAL = 50; // ms
 const INPUT_INTERVAL = 33; // ms
+const DIGITS = { Digit1: 1, Digit2: 2, Digit3: 3, Numpad1: 1, Numpad2: 2, Numpad3: 3 };
 
 export class Session {
   constructor(app, opts) {
@@ -59,9 +61,11 @@ export class Session {
     this.hud = new Hud(hudRoot);
     this.hud.setWorld(this.world, this.map);
     this.hud.onPick = (i) => this.pick(i);
-    this.input = new Input(window);
+    this.binds = resolveBinds(this.app.profile.settings.keys);
+    this.hud.setKeys(this.binds);
+    this.input = new Input(window, this.binds);
     this.input.onWheel = (s) => (this.renderer.zoom = Math.max(0.65, Math.min(1.5, this.renderer.zoom + s * 0.08)));
-    this.input.onKey = (e) => this.onKey(e);
+    this.input.onKey = (e, code) => this.onKey(e, code);
     this.last = performance.now();
     this.running = true;
     this.app.audio.startMusic(this.map.id);
@@ -89,22 +93,35 @@ export class Session {
     document.getElementById('game').style.display = 'none';
   }
 
-  onKey(e) {
-    if (e.code === 'Escape' && e.type === 'keydown' && !e.repeat) {
-      this.app.togglePause();
+  // code: e.code with left/right modifiers merged (see keybinds.js). Called on keydown and keyup.
+  onKey(e, code) {
+    const down = e.type === 'keydown';
+    if (code === 'Escape' && down && !e.repeat) {
+      // Esc closes the big map first, then works as pause
+      if (this.hud.showMap) this.hud.showMap = false;
+      else this.app.togglePause();
       return true;
     }
-    if (e.code === 'Tab') {
-      if (this.hud) this.hud.showScore = e.type === 'keydown';
+    if (code === this.binds.score) {
+      this.hud.showScore = down;
+      return true;
     }
-    const digit = { Digit1: 1, Digit2: 2, Digit3: 3, Numpad1: 1, Numpad2: 2, Numpad3: 3 }[e.code];
-    if (digit && e.type === 'keydown' && !e.repeat) {
+    if (code === this.binds.map) {
+      if (down && !e.repeat) this.hud.showMap = !this.hud.showMap;
+      return true;
+    }
+    const digit = DIGITS[code];
+    if (digit && down && !e.repeat) {
       const me = this.snap && this.snap.P.find((p) => p.id === this.localId);
       if (me && me.chs) {
         this.pick(digit);
         return true;
       }
-      if (digit <= 2 && me && me.cw !== digit - 1 && me.w[digit - 1]) this.input.acts.swap = true;
+      // the sim picks the slot against its own current weapon; checking the (older) snapshot here dropped presses
+      if (digit <= 2 && this.input.enabled) {
+        this.input.acts.slot = digit;
+        delete this.input.acts.swap;
+      }
       return true;
     }
     return false;
@@ -187,9 +204,23 @@ export class Session {
       events = this.clientEvents;
       this.clientEvents = [];
       const inp = this.input.sample(aim);
-      for (const k in inp.acts) if (inp.acts[k]) this.pendingActs[k] = true;
+      mergeActs(this.pendingActs, inp.acts);
       const me = snap.P.find((p) => p.id === this.localId);
       if (me) {
+        // show a weapon swap right away; the host's snapshot takes over once it agrees (or after 0.6 s)
+        if (inp.acts.swap || inp.acts.slot) {
+          const cw = swapTarget(this.cwPred ? this.cwPred.cw : me.cw, inp.acts);
+          if (me.w[cw]) {
+            this.cwPred = { cw, until: now + 600 };
+            this.localFireCd = Math.max(this.localFireCd, 0.35);
+          }
+        }
+        if (this.cwPred) {
+          // a snapshot is reused until the next one arrives, so keep the host's own value to compare against
+          if (me.hcw === undefined) me.hcw = me.cw;
+          if (me.hcw === this.cwPred.cw || now > this.cwPred.until) this.cwPred = null;
+          else me.cw = this.cwPred.cw;
+        }
         if (!this.pred || this.pred.tp !== me.tp || Math.hypot(this.pred.x - me.x, this.pred.z - me.z) > 6) {
           this.pred = { x: me.x, z: me.z, stamina: me.st, tp: me.tp, perks: {}, char: me.c, moving: false, sprinting: false };
         }

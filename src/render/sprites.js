@@ -91,9 +91,17 @@ const OUT = 'rgba(40,30,30,0.85)';
 
 // ------------------------------------------------------------------ guns
 const gunCache = new Map();
+// Forge level paint (index = level): X violet, XX crimson, each with a glowing seam and hot core
+const FORGE_PAINT = [
+  null,
+  { body: '#9b59d0', metal: '#d6b0ff', seam: '#c47cff', core: '#f0dcff' },
+  { body: '#b3122a', metal: '#ff8a80', seam: '#ff5a4a', core: '#ffd6cc' },
+];
 // Side-view gun sprite pointing right. Returns {canvas, gx, gy} where (gx,gy) is the grip.
+// forged is the forge level (0, 1, 2); booleans are treated as 0 / 1.
 export function gunSprite(wid, forged, scale) {
-  const key = wid + (forged ? 'X' : '') + '@' + Math.round(scale);
+  const lvl = +forged || 0;
+  const key = wid + lvl + '@' + Math.round(scale);
   if (gunCache.has(key)) return gunCache.get(key);
   const w = WEAPONS[wid] || WEAPONS.pistol;
   const L = w.len * scale * 1.35;
@@ -102,8 +110,9 @@ export function gunSprite(wid, forged, scale) {
   c.width = cw;
   c.height = ch;
   const g = c.getContext('2d');
-  const body = forged ? '#9b59d0' : hex(w.gunColor);
-  const metal = forged ? '#d6b0ff' : '#3a3d44';
+  const paint = FORGE_PAINT[lvl];
+  const body = paint ? paint.body : hex(w.gunColor);
+  const metal = paint ? paint.metal : '#3a3d44';
   const t = Math.max(2, scale * 0.13);
   const y0 = ch * 0.38;
   const lw = Math.max(1.5, scale * 0.045);
@@ -136,7 +145,7 @@ export function gunSprite(wid, forged, scale) {
   }
   if (wid === 'raygun' || wid === 'tesla') {
     circle(g, L * 0.72, y0 + t * 0.4, t * 0.7);
-    fillStroke(g, hex(w.color), OUT, lw);
+    fillStroke(g, paint && paint.seam ? paint.seam : hex(w.color), OUT, lw);
   }
   if (wid === 'minigun') {
     for (let i = 0; i < 3; i++) {
@@ -156,6 +165,13 @@ export function gunSprite(wid, forged, scale) {
     g.quadraticCurveTo(L * 0.7, y0 + t * 0.4, L * 0.85, y0 + t * 2.2);
     g.stroke();
   }
+  if (paint && paint.seam) {
+    // energy seam along body and barrel, with a hot core
+    g.fillStyle = paint.seam;
+    g.fillRect(L * 0.24, y0 + t * 0.38, L * 0.72, Math.max(1, t * 0.24));
+    g.fillStyle = paint.core;
+    g.fillRect(L * 0.26, y0 + t * 0.45, L * 0.68, Math.max(0.5, t * 0.09));
+  }
   const out = { canvas: c, gx: L * 0.3, gy: y0 + t * 0.9, len: L };
   gunCache.set(key, out);
   return out;
@@ -164,7 +180,7 @@ export function gunSprite(wid, forged, scale) {
 // Gun icon for the HUD as a data URL
 const iconCache = new Map();
 export function gunIconURL(wid, forged) {
-  const key = wid + (forged ? 'X' : '');
+  const key = wid + (+forged || 0);
   if (iconCache.has(key)) return iconCache.get(key);
   const s = gunSprite(wid, forged, 46);
   const url = s.canvas.toDataURL();

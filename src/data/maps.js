@@ -405,7 +405,7 @@ export const MAPS = [
       c.spot('charge', 52, 90);
       c.solid(62, 88, 4, 2, { kind: 'console', h: 1 });
       c.spot('forge', 66, 92);
-      c.spot('boonshop', 60, 92);
+      c.spot('boonshop', 40, 74);
       c.loot('chest', 50, 94, 'n');
       c.loot('rack', 67, 83, 's');
       // tent camp with campfires
@@ -554,7 +554,7 @@ export const MAPS = [
       c.spot('box', 26, 70);
       c.spot('box', 96, 32);
       c.spot('forge', 72, 58);
-      c.spot('boonshop', 66, 58);
+      c.spot('boonshop', 48, 50);
       c.forestBorder(5, 0.6);
       c.scatter(5, (x, z) => c.loot('crate', x, z, 's'), [8, 8, 104, 104]);
       c.scatter(120, (x, z) => c.tree(x, z, 0.8 + rng() * 0.6));
@@ -662,7 +662,7 @@ export const MAPS = [
       c.spot('box', 30, 90);
       c.spot('box', 90, 30);
       c.spot('forge', 74, 116);
-      c.spot('boonshop', 68, 116);
+      c.spot('boonshop', 54, 100);
     },
   },
 ];

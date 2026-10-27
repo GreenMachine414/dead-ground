@@ -125,19 +125,19 @@ export const CHARACTERS = {
   mags: {
     name: 'Mags', role: 'Quartermaster', color: 0xb8862e, skin: 0xa87050, hat: 'beanie',
     ability: 'Supply Drop',
-    desc: 'Tosses a supply bag at the cursor. Every teammate can grab it once for ammo.',
+    desc: 'Drops supply bags around himself. Anyone short on ammo can grab one.',
     passive: '+25% max reserve ammo',
     levels: [
-      'Supply bag: 50% reserve ammo for each ally who grabs it',
+      'Two supply bags, each restocks 50% reserve ammo',
       '75% restock, bag lasts 25s',
       'Bag also gives +1 grenade',
-      'Full restock, drops a second bag at your feet, faster cooldown',
+      'Full restock, drops a third bag, faster cooldown',
       'Bags also refill magazines',
     ],
     stats(lvl) {
       return {
         restock: [0.5, 0.75, 0.75, 1, 1][lvl - 1],
-        bags: lvl >= 4 ? 2 : 1,
+        bags: lvl >= 4 ? 3 : 2,
         life: [20, 25, 25, 30, 35][lvl - 1],
         grenades: lvl >= 3 ? 1 : 0,
         mags: lvl >= 5,

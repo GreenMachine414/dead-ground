@@ -50,9 +50,48 @@ for (let m = 1; m <= 5; m++) {
     const z = g.spawnZombie('walker', p.x + 3, p.z, false);
     g.damageZombie(z, 1e6, p.id, 'bullet');
   }
+  const before = p.points;
   run(g, 0.1, use);
+  check('forge XX costs 10000', before - p.points === 10000, `${before - p.points}`);
   run(g, 3);
   check('forge XX after 100 kills', p.weapons[0].forged === 2 && g.wstat(p, p.weapons[0]).name.endsWith(' XX'));
+}
+
+// 2b) forge damage is a fixed multiplier (X x1.5, XX x2 of the unforged gun, any round), and
+// bosses take only half the bonus
+{
+  const g = quiet(3);
+  const p = g.players[0];
+  const dmg = (lvl, rarity = 0) => g.wstat(p, g.makeWeapon('ar', lvl, rarity)).damage;
+  const x = dmg(1) / dmg(0), xx = dmg(2) / dmg(0), xxLeg = dmg(2, 4) / dmg(0, 4);
+  check('forge multipliers fixed', Math.abs(x - 1.5) < 1e-9 && Math.abs(xx - 2) < 1e-9 && Math.abs(xxLeg - 2) < 1e-9, `X ${x.toFixed(2)}, XX ${xx.toFixed(2)}`);
+  p.weapons[0] = g.makeWeapon('ar', 2);
+  p.cur = 0;
+  const hit = (type) => {
+    const z = g.spawnZombie(type, p.x + 3, p.z, false);
+    z.hp = 1e7;
+    g.damageZombie(z, 1000, p.id, 'bullet');
+    return 1e7 - z.hp;
+  };
+  const boss = hit('harvester'), walker = hit('walker');
+  check('bosses take half the forge bonus', walker === 1000 && Math.abs(boss - (1000 * (1 + (xx - 1) * 0.5)) / xx) < 1e-6, `boss ${boss.toFixed(1)}`);
+}
+
+// 2d) Storm Caller: 350 damage, one shot per reload at every forge level and rarity, 2.5s reload
+{
+  const g = quiet(5);
+  const p = g.players[0];
+  const st = (lvl, r) => g.wstat(p, g.makeWeapon('tesla', lvl, r));
+  const mags = [st(0, 0), st(1, 4), st(2, 4)].map((s) => s.mag);
+  check('storm caller nerf', st(0, 0).damage === 350 && st(0, 0).reload === 2.5 && mags.every((m) => m === 1), `mags ${mags}`);
+}
+
+// 2c) runners stay faster than walkers but never outrun a walking player
+{
+  const g = quiet(1);
+  g.wave = 40;
+  const runner = g.spawnZombie('runner', 10, 10, false), walker = g.spawnZombie('walker', 10, 12, false);
+  check('runner speed capped', runner.speed > walker.speed && runner.speed <= 5.4 * 0.9 + 1e-9, `runner ${runner.speed.toFixed(2)}, walker ${walker.speed.toFixed(2)}`);
 }
 
 // 3) grenade launcher lands near the cursor
@@ -157,30 +196,83 @@ for (let m = 1; m <= 5; m++) {
   check('overcharge boosts ability damage', d2 > d0 * 1.25, `${Math.round(d0)} -> ${Math.round(d2)}`);
 }
 
-// 9) Mags tosses a supply bag each teammate can grab once
+// 9) Mags drops bags around himself; each bag goes to one player who is short on ammo
 {
   const g = new Game({ mapId: 1, mode: 'endless', seed: 5, unlockedMap: 5, players: [
     { id: 0, name: 'M', char: 'mags', level: 5 }, { id: 1, name: 'A', char: 'brick', level: 1 }] });
   g.wave = 5;
   g.waveT = 1e9;
   const [m, a] = g.players;
+  a.x = m.x + 20; // ally is away when the bags drop
+  run(g, 0.05, (q) => idle(q, { acts: q === m ? { ability: true } : {} }));
+  const bags = g.pickups.filter((k) => k.kind === 'supply');
+  const gaps = bags.map((k) => Math.hypot(k.x - m.x, k.z - m.z));
+  check('level 5 drops three bags around Mags', bags.length === 3 && gaps.every((d) => d > 1.3), gaps.map((d) => d.toFixed(2)).join(' '));
+  // a full player walks over a bag without using it
+  a.x = bags[0].x;
+  a.z = bags[0].z;
+  run(g, 0.05);
+  check('full ammo leaves the bag', g.pickups.includes(bags[0]));
   const w = a.weapons[0];
   const max = g.wstat(a, w).reserve;
   w.reserve = 0;
   w.mag = 0;
   a.grenades = 0;
-  a.x = m.x + 20; // ally is away when the bags drop
-  run(g, 0.05, (q) => idle(q, { ax: m.x + 3, az: m.z, acts: q === m ? { ability: true } : {} }));
-  const bags = g.pickups.filter((k) => k.kind === 'supply');
-  check('level 5 drops two supply bags', bags.length === 2, `bags=${bags.length}`);
-  a.x = bags[0].x;
-  a.z = bags[0].z;
   run(g, 0.05);
-  check('ally restocks from the bag', w.reserve === max && w.mag === g.wstat(a, w).mag && a.grenades === 1, `reserve ${w.reserve}/${max}`);
-  w.reserve = 0;
-  run(g, 0.5);
-  check('each ally grabs a bag only once', w.reserve === 0);
+  check('ally restocks and the bag is used up', w.reserve === max && w.mag === g.wstat(a, w).mag && a.grenades === 1 && !g.pickups.includes(bags[0]), `reserve ${w.reserve}/${max}`);
   check('Mags carries +25% reserve', g.wstat(m, m.weapons[0]).reserve === Math.round(g.wstat(a, a.weapons[0]).reserve * 1.25));
+}
+
+// 9b) the upgrade machine is well away from the forge
+for (let m = 3; m <= 5; m++) {
+  const { forge, boonshop } = quiet(m).world.spots;
+  check(`map${m} machines apart`, Math.hypot(forge.x - boonshop.x, forge.z - boonshop.z) > 15);
+}
+
+// 9c) Brick can wall himself in; zombies outside hit the wall, not him
+{
+  const g = new Game({ mapId: 1, mode: 'endless', seed: 5, unlockedMap: 5, players: [{ id: 0, name: 'B', char: 'brick', level: 5 }] });
+  g.wave = 5;
+  g.waveT = 1e9;
+  const b = g.players[0];
+  b.charges = 9;
+  let built = 0;
+  for (const ang of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    const n = g.structs.length;
+    run(g, DT, (q) => idle(q, { ax: q.x + Math.cos(ang) * 5, az: q.z + Math.sin(ang) * 5, acts: { ability: true } }));
+    if (g.structs.length > n) built++;
+  }
+  check('Brick can box himself in', built === 4, `walls ${built}/4`);
+  const wall = g.structs[0];
+  const z = g.spawnZombie('walker', wall.x + Math.sign(wall.x - b.x) * 1.2, wall.z, false);
+  const hp0 = wall.hp;
+  let hurt = 0;
+  for (let i = 0; i < 4 / DT; i++) {
+    g.setInput(b.id, idle(b));
+    b.hp = b.maxHp;
+    g.update(DT);
+    hurt += g.drainEvents().filter((e) => e.k === 'hurt').length;
+    if (!g.structs.includes(wall)) break;
+  }
+  check('zombie damages the wall instead of the player', hurt === 0 && (wall.hp < hp0 || !g.structs.includes(wall)), `hits=${hurt} wall ${Math.round(wall.hp)}/${hp0} z@${Math.hypot(z.x - b.x, z.z - b.z).toFixed(2)}`);
+}
+
+// 10) weapon swaps: number keys pick a slot, and two quick swap presses in one tick cancel out
+{
+  const g = quiet(1);
+  const p = g.players[0];
+  p.weapons[1] = g.makeWeapon('smg');
+  const tick = (acts) => run(g, DT, (q) => idle(q, { acts }));
+  tick({ slot: 2 });
+  const a = p.cur;
+  tick({ slot: 2 });
+  const b = p.cur;
+  g.setInput(p.id, idle(p, { acts: { swap: 1 } }));
+  g.setInput(p.id, idle(p, { acts: { swap: 1 } }));
+  run(g, DT);
+  const c = p.cur;
+  tick({ swap: 1 });
+  check('slot keys and swap presses', a === 1 && b === 1 && c === 1 && p.cur === 0, `${a}${b}${c}${p.cur}`);
 }
 
 console.log(failures ? `${failures} FAILED` : 'ALL PASSED');

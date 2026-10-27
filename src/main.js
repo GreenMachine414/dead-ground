@@ -9,8 +9,10 @@ import { Session } from './session.js';
 import { measureRefresh } from './render/renderer.js';
 import { esc } from './hud.js';
 import { runSmoke } from './smoke.js';
+import { BINDS, RESERVED, resolveBinds, keyName, normCode } from './keybinds.js';
 import { runPerf } from './perf.js';
 import { MenuBackdrop } from './menubg.js';
+import { BUG_MAX, BUG_KEEP, checkReport, newReportId, sendReport } from './bugreport.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -55,6 +57,7 @@ class App {
     $('#intro-go').addEventListener('click', () => this.closeIntro());
     $('#error-close').addEventListener('click', () => $('#overlay-error').classList.remove('show'));
     this.bindSettings();
+    this.bindBugs();
     this.show('main');
     const args = window.native ? await window.native.args() : {};
     if (args.smoke) runSmoke(this);
@@ -65,6 +68,7 @@ class App {
   show(name) {
     $$('.screen').forEach((s) => s.classList.toggle('active', s.id === 'screen-' + name));
     this.screen = name;
+    if (this.keyListen) this.keyListen();
     if (!this.session) {
       this.audio.startMusic('menu');
       if (this.backdrop) this.backdrop.start();
@@ -72,6 +76,8 @@ class App {
     if (name === 'main') this.renderMain();
     if (name === 'chars') this.renderUpgrades();
     if (name === 'settings') this.renderSettings();
+    if (name === 'howto') this.renderHowto();
+    if (name === 'bugs') this.renderBugs();
   }
 
   hideScreens() {
@@ -146,6 +152,15 @@ class App {
     $('#set-shake').addEventListener('change', (e) => this.setSetting('shake', e.target.checked));
     $('#set-graphics').addEventListener('change', (e) => this.setSetting('graphics', e.target.value));
     $('#set-fullscreen').addEventListener('change', (e) => this.setFullscreen(e.target.checked));
+    $('#set-keys').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-bind]');
+      if (btn) this.listenKey(btn);
+    });
+    $('#set-keys-reset').addEventListener('click', () => {
+      this.setSetting('keys', {});
+      this.renderKeys();
+      this.toast('Controls reset to defaults');
+    });
     $('#set-reset').addEventListener('click', () => {
       if (!confirm('Reset all progress, upgrades and salvage? This cannot be undone.')) return;
       const keep = this.profile.settings;
@@ -167,6 +182,142 @@ class App {
     $('#set-shake').checked = s.shake;
     $('#set-fullscreen').checked = s.fullscreen;
     $('#set-graphics').value = s.graphics;
+    this.renderKeys();
+  }
+
+  // ---------------------------------------------------------------- controls
+  renderKeys() {
+    const binds = resolveBinds(this.profile.settings.keys);
+    $('#set-keys').innerHTML = BINDS.map((b) => `<span>${b.label}</span><button data-bind="${b.id}">${esc(keyName(binds[b.id]))}</button>`).join('');
+  }
+
+  // wait for the next key press and bind it to the button's action
+  listenKey(btn) {
+    if (this.keyListen) this.keyListen();
+    btn.classList.add('listening');
+    btn.textContent = 'Press a key…';
+    const id = btn.dataset.bind;
+    const onDown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const code = normCode(e.code);
+      stop();
+      if (code === 'Escape') return;
+      if (RESERVED.has(code)) return this.toast(`${keyName(code)} can't be rebound`);
+      this.rebind(id, code);
+    };
+    const stop = () => {
+      window.removeEventListener('keydown', onDown, true);
+      this.keyListen = null;
+      this.renderKeys();
+    };
+    window.addEventListener('keydown', onDown, true);
+    this.keyListen = stop;
+  }
+
+  // a key already used by another action swaps the two; only changes from the defaults are saved
+  rebind(id, code) {
+    const binds = resolveBinds(this.profile.settings.keys);
+    const other = BINDS.find((b) => b.id !== id && binds[b.id] === code);
+    if (other) binds[other.id] = binds[id];
+    binds[id] = code;
+    const keys = {};
+    for (const b of BINDS) if (binds[b.id] !== b.def) keys[b.id] = binds[b.id];
+    this.setSetting('keys', keys);
+    this.renderKeys();
+    if (other) this.toast(`${other.label} moved to ${keyName(binds[other.id])}`);
+  }
+
+  // How to Play shows the player's current keys
+  renderHowto() {
+    const names = resolveBinds(this.profile.settings.keys);
+    for (const td of $$('[data-k]')) {
+      td.textContent = td.dataset.k.split(',').map((id) => keyName(names[id])).join(' ') + (td.dataset.kSuffix || '');
+    }
+  }
+
+  // ---------------------------------------------------------------- bug reports
+  bindBugs() {
+    const box = $('#bug-text');
+    box.maxLength = BUG_MAX;
+    box.addEventListener('input', () => this.bugCount());
+    $('#bug-send').addEventListener('click', () => this.sendBug());
+    $('#bug-cancel').addEventListener('click', () => this.editBug(null));
+    $('#bug-list').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-edit]');
+      if (btn) this.editBug(btn.dataset.edit);
+    });
+    this.editBug(null);
+  }
+
+  renderBugs() {
+    this.bugStatus('');
+    const list = this.profile.bugReports;
+    $('#bug-list').innerHTML = list.length
+      ? list
+          .map((r) => {
+            const when = new Date(r.sent).toLocaleDateString();
+            const snip = r.text.length > 140 ? r.text.slice(0, 140) + '…' : r.text;
+            return `<div class="bug-item${r.id === this.bugEditing ? ' editing' : ''}"><div class="bug-meta">#${r.id} · ${when}${r.edits ? ` · edited ${r.edits}×` : ''}</div><button data-edit="${r.id}">Edit</button><div class="bug-snip">${esc(snip)}</div></div>`;
+          })
+          .join('')
+      : '<p class="hint">Reports you send show up here so you can edit them later.</p>';
+  }
+
+  // id: a saved report to edit, or null for a new report
+  editBug(id) {
+    const r = id && this.profile.bugReports.find((q) => q.id === id);
+    this.bugEditing = r ? r.id : null;
+    $('#bug-text').value = r ? r.text : '';
+    $('#bug-head').textContent = r ? `Editing report #${r.id}` : 'Report a bug or share feedback';
+    $('#bug-send').textContent = r ? 'Save changes' : 'Submit';
+    $('#bug-cancel').style.display = r ? '' : 'none';
+    this.bugCount();
+    if (this.screen === 'bugs') {
+      this.renderBugs();
+      $('#bug-text').focus();
+    }
+  }
+
+  bugCount() {
+    const n = $('#bug-text').value.length;
+    const el = $('#bug-count');
+    el.textContent = `${n} / ${BUG_MAX}`;
+    el.classList.toggle('near', n > BUG_MAX * 0.9);
+  }
+
+  bugStatus(text, ok = false) {
+    const el = $('#bug-status');
+    el.textContent = text;
+    el.className = 'hint ' + (ok ? 'ok' : 'err');
+  }
+
+  async sendBug() {
+    if (this.bugBusy) return;
+    const text = $('#bug-text').value.trim();
+    const reports = this.profile.bugReports;
+    const old = this.bugEditing && reports.find((r) => r.id === this.bugEditing);
+    if (old && old.text === text) return this.bugStatus('Nothing has changed yet.');
+    const err = checkReport(text, reports);
+    if (err) return this.bugStatus(err);
+    const r = old ? { ...old, text, edits: old.edits + 1 } : { id: newReportId(), text, edits: 0 };
+    this.bugBusy = true;
+    $('#bug-send').disabled = true;
+    this.bugStatus('Sending…', true);
+    try {
+      if (!this.smoke) await sendReport(r, this.profile.name); // smoke runs never send email
+    } catch (e) {
+      console.warn('bug report failed', e);
+      return this.bugStatus("Couldn't send the report. Check your internet connection and try again.");
+    } finally {
+      this.bugBusy = false;
+      $('#bug-send').disabled = false;
+    }
+    r.sent = Date.now();
+    this.profile.bugReports = [r, ...reports.filter((q) => q.id !== r.id)].slice(0, BUG_KEEP);
+    this.save();
+    this.editBug(null);
+    this.bugStatus(old ? 'Changes sent. Thanks!' : 'Sent. Thanks!', true);
   }
 
   // on: true/false, or undefined to toggle (F11). Remembered for the next launch.
@@ -205,16 +356,20 @@ class App {
           ${cost === null ? 'MAX LEVEL' : `Upgrade — ⚙ ${cost}`}</button>
       </div>`;
     }).join('');
-    $$('[data-up]').forEach((b) => b.addEventListener('click', () => {
-      const id = b.dataset.up;
-      const cost = upgradeCost(p.levels[id]);
-      if (cost === null || p.salvage < cost) return;
-      p.salvage -= cost;
-      p.levels[id]++;
-      this.save();
-      this.audio.play('perk');
-      this.renderUpgrades();
-    }));
+    $$('[data-up]').forEach((b) => b.addEventListener('click', () => this.buyUpgrade(b.dataset.up) && this.renderUpgrades()));
+  }
+
+  // spend salvage on a character level; in a lobby the new level goes to everyone with the pick
+  buyUpgrade(id) {
+    const p = this.profile;
+    const cost = upgradeCost(p.levels[id]);
+    if (cost === null || p.salvage < cost) return false;
+    p.salvage -= cost;
+    p.levels[id]++;
+    this.save();
+    this.audio.play('perk');
+    if (this.lobby && !this.session && p.char === id) this.selectChar(id);
+    return true;
   }
 
   // ---------------------------------------------------------------- lobby
@@ -395,6 +550,17 @@ class App {
       </button>`;
     }).join('');
     $$('[data-char]').forEach((b) => b.addEventListener('click', () => this.selectChar(b.dataset.char)));
+    // upgrade the picked survivor without leaving the lobby
+    const c = CHARACTERS[myChar], lvl = this.profile.levels[myChar], cost = upgradeCost(lvl);
+    const can = cost !== null && this.profile.salvage >= cost;
+    $('#lobby-upgrade').innerHTML = `<div class="lobup-info"><b>${c.name}</b> · ${c.ability} Level ${lvl}/${MAX_LEVEL}
+        <div class="lobup-next">${cost === null ? 'Fully upgraded' : 'Next: ' + c.levels[lvl]}</div></div>
+      <div class="lobup-buy"><span>⚙ ${this.profile.salvage}</span>
+        <button id="lobby-up" class="${can ? 'big' : ''}" ${can ? '' : 'disabled'}>${cost === null ? 'MAX LEVEL' : `Upgrade — ⚙ ${cost}`}</button></div>`;
+    $('#lobby-up').addEventListener('click', () => {
+      this.buyUpgrade(myChar);
+      this.renderLobby();
+    });
     // players
     $('#lobby-players').innerHTML = L.players.map((p) => `<div class="lp"><div><b>${esc(p.name)}</b>${p.host ? '<span class="host-tag">HOST</span>' : ''}
         <div class="lp-char">${CHARACTERS[p.char].name} · ${CHARACTERS[p.char].ability} Lv ${p.level}</div></div></div>`).join('');

@@ -4,8 +4,10 @@ import { CHARACTERS } from './data/characters.js';
 import { PERKS, POWERUPS } from './data/zombies.js';
 import { BOONS } from './data/boons.js';
 import { gunIconURL, hex } from './render/sprites.js';
+import { resolveBinds, keyName } from './keybinds.js';
 
 const $ = (root, sel) => root.querySelector(sel);
+const BIGMAP_W = 880, BIGMAP_H = 600; // max full-map canvas size (px)
 
 export class Hud {
   constructor(root) {
@@ -37,6 +39,7 @@ export class Hud {
       <div class="vignette"></div>
       <div class="down-overlay"><div class="down-title">YOU ARE DOWN</div><div class="down-sub"></div></div>
       <div class="scoreboard card"></div>
+      <div class="bigmap card"><div class="bigmap-head"><span class="bigmap-title"></span><span class="bigmap-hint"></span></div><canvas class="bigmap-cv"></canvas></div>
       <div class="whiteflash"></div>
       <div class="crosshair"></div>
     `;
@@ -53,14 +56,18 @@ export class Hud {
       mag: q('.mag'), res: q('.res'), wAlt: q('.w-alt'), reload: q('.w-reload'), reloadFill: q('.w-reload .fill'),
       vignette: q('.vignette'), down: q('.down-overlay'), downSub: q('.down-sub'), score: q('.scoreboard'), flash: q('.whiteflash'),
       crosshair: q('.crosshair'), levelup: q('.levelup'), luCards: q('.lu-cards'), luMore: q('.lu-more'),
-      xpLvl: q('.xp-lvl'), xpFill: q('.xp-bar div'), xpBoons: q('.xp-boons'),
+      xpLvl: q('.xp-lvl'), xpFill: q('.xp-bar div'), xpBoons: q('.xp-boons'), abKey: q('.ab-key'),
+      bigmap: q('.bigmap'), bigmapCv: q('.bigmap-cv'), bigmapTitle: q('.bigmap-title'), bigmapHint: q('.bigmap-hint'),
     };
+    this.showMap = false;
+    this.setKeys(resolveBinds());
     this.msgQueue = [];
     this.msgT = 0;
     this.hurtT = 0;
     this.popT = 0;
     this.popSum = 0;
     this.cache = {};
+    this.bars = {}; // smoothed progress bars, see bar()
     this.showScore = false;
     this.onPick = null;
     this.el.luCards.addEventListener('mousedown', (e) => {
@@ -138,6 +145,41 @@ export class Hud {
     }
     this.mapImg = c;
     this.mapS = S;
+    // full map: the minimap art scaled to fit, with the fixed machines labelled, rendered once
+    const bc = this.el.bigmapCv;
+    const fit = Math.min(BIGMAP_W / world.W, BIGMAP_H / world.H);
+    bc.width = Math.round(world.W * fit);
+    bc.height = Math.round(world.H * fit);
+    const big = document.createElement('canvas');
+    big.width = bc.width;
+    big.height = bc.height;
+    const bg = big.getContext('2d');
+    bg.drawImage(c, 0, 0, big.width, big.height);
+    for (const s of world.spots.perk) this.mapText(bg, PERKS[s.perk].name, s.x * fit, s.z * fit, hex(PERKS[s.perk].color));
+    if (shop) this.mapText(bg, 'Upgrade Machine', shop.x * fit, shop.z * fit, '#d2a8ff');
+    if (forge) this.mapText(bg, 'Weapon Forge', forge.x * fit, forge.z * fit, '#ffaa60');
+    this.bigMapImg = big;
+    this.el.bigmapTitle.textContent = map.name;
+  }
+
+  // small label just above a point on a map canvas
+  mapText(g, text, x, y, col) {
+    g.font = '800 12px Nunito, Segoe UI, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'bottom';
+    g.lineWidth = 3;
+    g.strokeStyle = 'rgba(28,22,30,0.85)';
+    g.strokeText(text, x, y - 7);
+    g.fillStyle = col;
+    g.fillText(text, x, y - 7);
+  }
+
+  // key names for prompts and the HUD (binds: action -> key code)
+  setKeys(binds) {
+    this.keys = {};
+    for (const id in binds) this.keys[id] = keyName(binds[id]);
+    this.el.abKey.textContent = this.keys.ability;
+    this.el.bigmapHint.textContent = `${this.keys.map} or Esc to close`;
   }
 
   message(main, sub = '', time = 3.5) {
@@ -153,7 +195,28 @@ export class Hud {
     while (this.el.notes.children.length > 6) this.el.notes.firstChild.remove();
   }
 
-  set(key, el, value, prop = 'textContent') {
+  // Timed bars (looting, building, reviving, reloading) only change on sim ticks or snapshots, which
+  // looks steppy at high refresh rates or over the network. Carry the bar on at its measured rate
+  // between updates (at most 0.15 s ahead) and draw it with a transform, which skips layout.
+  bar(key, el, v, dt) {
+    let b = this.bars[key];
+    if (!b) b = this.bars[key] = { v: -1, at: 0, rate: 0, shown: 0, t: 0 };
+    b.t += dt;
+    if (v !== b.v) {
+      const step = v - b.v, gap = b.t - b.at;
+      if (b.v < 0 || step < 0 || step > 0.3 || gap > 0.25) {
+        // new or restarted bar: jump to it
+        b.rate = 0;
+        b.shown = v;
+      } else b.rate = b.rate ? b.rate * 0.6 + (step / Math.max(gap, 0.004)) * 0.4 : step / Math.max(gap, 0.004);
+      b.v = v;
+      b.at = b.t;
+    }
+    b.shown = Math.max(b.shown, Math.min(1, v + b.rate * Math.min(b.t - b.at, 0.15)));
+    el.style.transform = `scaleX(${b.shown})`;
+  }
+
+    set(key, el, value, prop = 'textContent') {
     if (this.cache[key] === value) return;
     this.cache[key] = value;
     el[prop] = value;
@@ -262,7 +325,7 @@ export class Hud {
     el.ability.classList.toggle('ready', ready);
     el.ability.style.setProperty('--ab-color', hex(ch.color));
     el.abCd.style.height = (me.cd > 0 ? me.cd / me.cdm : 0) * 100 + '%';
-    this.set('abs', el.abState, ready ? 'Ready — F / Right-click' : 'Recharging ' + Math.ceil(me.cd) + 's');
+    this.set('abs', el.abState, ready ? `Ready — ${this.keys.ability} / Right-click` : 'Recharging ' + Math.ceil(me.cd) + 's');
     this.set('abc', el.abCharges, me.c === 'brick' ? `${me.ch}/${me.chm}` : '');
     this.set('gren', el.grenades, '<span class="gico"></span>'.repeat(me.g) || '<span class="none">no grenades</span>', 'innerHTML');
     this.set('perks', el.perks, me.pk.map((k) => `<span class="perk" style="background:${hex(PERKS[k].color)}">${PERKS[k].name}</span>`).join(''), 'innerHTML');
@@ -271,9 +334,9 @@ export class Hud {
     if (w) {
       const r = RARITY[w[5] || 0];
       const ws = weaponStats(w[0], w[1], w[5] || 0);
-      this.set('wicon', el.wIcon, gunIconURL(w[0], !!w[1]), 'src');
+      this.set('wicon', el.wIcon, gunIconURL(w[0], w[1]), 'src');
       this.set('wr', el.wRarity, (w[1] ? 'Forged · ' : '') + r.name);
-      el.wRarity.style.color = w[1] ? '#d6a8ff' : r.color;
+      el.wRarity.style.color = w[1] === 2 ? '#ff8a80' : w[1] ? '#d6a8ff' : r.color;
       this.set('wn', el.wName, ws.name + (w[4] ? ' (forging...)' : w[1] === 1 ? ` · XX ${Math.min(w[7], FORGE2.kills)}/${FORGE2.kills}` : ''));
       this.set('mag', el.mag, String(w[2]));
       this.set('res', el.res, ' / ' + w[3]);
@@ -281,9 +344,10 @@ export class Hud {
       el.mag.classList.toggle('low', w[2] > 0 && w[2] <= Math.ceil((w[6] || ws.mag) * 0.25));
     }
     const alt = me.w[1 - me.cw];
-    this.set('alt', el.wAlt, alt ? `[Q] ${RARITY[alt[5] || 0].name} ${WEAPONS[alt[0]].name}` : '');
+    this.set('alt', el.wAlt, alt ? `[${this.keys.swap}] ${RARITY[alt[5] || 0].name} ${WEAPONS[alt[0]].name}` : '');
     el.reload.style.display = me.rl >= 0 ? 'block' : 'none';
-    if (me.rl >= 0) el.reloadFill.style.width = me.rl * 100 + '%';
+    if (me.rl >= 0) this.bar('rl', el.reloadFill, me.rl, dt);
+    else this.bars.rl = null;
     // XP
     this.set('xpl', el.xpLvl, 'Lv ' + me.rk);
     el.xpFill.style.width = Math.min(100, (me.xp / me.xpn) * 100) + '%';
@@ -294,20 +358,31 @@ export class Hud {
     el.levelup.classList.toggle('show', showLu);
     if (showLu) {
       this.set('lum', el.luMore, me.nch > 1 ? `(+${me.nch - 1} more)` : '');
-      const cards = me.chs.map((id, i) => {
-        const b = BOONS[id];
-        const have = (me.bo && me.bo[id]) || 0;
-        return `<div class="lu-card" data-pick="${i + 1}" style="--c:${b.color}"><div class="lu-key">${i + 1}</div><div class="lu-icon">${b.icon}</div><div class="lu-name">${b.name}${b.max > 1 ? ` ${have + 1}/${b.max}` : ''}</div><div class="lu-desc">${b.desc}</div></div>`;
-      }).join('');
-      this.set('lucards', el.luCards, cards, 'innerHTML');
+      // rebuild the cards only when the offer (or a level on it) changes, not every frame
+      const have = (id) => (me.bo && me.bo[id]) || 0;
+      const key = me.chs.map((id) => id + have(id)).join(',');
+      if (key !== this.luKey) {
+        this.luKey = key;
+        el.luCards.innerHTML = me.chs.map((id, i) => {
+          const b = BOONS[id];
+          const lvl = b.max > 1 ? `<div class="lu-lvl">Level ${have(id) + 1} of ${b.max}</div>` : '';
+          return `<div class="lu-card" data-pick="${i + 1}" style="--c:${b.color}"><div class="lu-key">${i + 1}</div><div class="lu-icon">${b.icon}</div><div class="lu-name">${b.name}</div>${lvl}<div class="lu-desc">${b.desc}</div></div>`;
+        }).join('');
+      }
     }
     // prompt
     const showPrompt = !!me.pr && me.s === 0;
     el.prompt.classList.toggle('show', showPrompt);
     if (showPrompt) {
-      this.set('pr', el.promptText, me.pr);
+      // sim prompts say [E]; show the player's interact key instead (only re-done when the text changes)
+      if (me.pr !== this.rawPr) {
+        this.rawPr = me.pr;
+        this.pr = this.keys.use === 'E' ? me.pr : me.pr.replaceAll('[E]', `[${this.keys.use}]`);
+      }
+      this.set('pr', el.promptText, this.pr);
       el.promptBar.style.display = me.pp >= 0 ? 'block' : 'none';
-      if (me.pp >= 0) el.promptFill.style.width = Math.min(1, me.pp) * 100 + '%';
+      if (me.pp >= 0) this.bar('pp', el.promptFill, Math.min(1, me.pp), dt);
+      else this.bars.pp = null;
     }
     this.hurtT = Math.max(0, this.hurtT - dt * 2);
     el.vignette.style.opacity = Math.max(this.hurtT * 0.8, hpf < 0.4 ? (0.4 - hpf) * 1.6 : 0);
@@ -321,27 +396,42 @@ export class Hud {
       const rows = snap.P.map((p) => `<tr><td>${esc(p.n)}</td><td>${CHARACTERS[p.c].name}</td><td>${p.rk}</td><td>${p.pts}</td><td>${p.k}</td><td>${p.dn}</td><td>${p.rvs}</td></tr>`).join('');
       this.set('sb', el.score, `<table><tr><th>Survivor</th><th>Character</th><th>Level</th><th>Points</th><th>Kills</th><th>Downs</th><th>Revives</th></tr>${rows}</table>`, 'innerHTML');
     }
-    // the minimap does not need 60 updates a second
-    if ((this.mmFrame = (this.mmFrame || 0) + 1) % 2 === 0) this.drawMinimap(snap, me);
+    // the maps do not need 60 updates a second: minimap every 2nd frame, big map every 3rd while open
+    const frame = (this.mmFrame = (this.mmFrame || 0) + 1);
+    if (frame % 2 === 0) this.drawMap(el.minimap, snap, me, false);
+    if (this.showMap !== this.mapShown) {
+      this.mapShown = this.showMap;
+      el.bigmap.classList.toggle('show', this.showMap);
+      if (this.showMap) this.drawMap(el.bigmapCv, snap, me, true);
+    } else if (this.showMap && frame % 3 === 0) this.drawMap(el.bigmapCv, snap, me, true);
   }
 
-  drawMinimap(snap, me) {
-    const cv = this.el.minimap;
+  // Minimap (round, 64 units around the player, off-view marks pinned to the edge) or, with
+  // `full`, the whole map on the pre-rendered bigMapImg.
+  drawMap(cv, snap, me, full) {
     const g = cv.getContext('2d');
-    const size = cv.width;
-    const view = 64;
-    const scale = size / view;
-    const cx = me.x, cz = me.z;
-    const S = this.mapS;
-    g.clearRect(0, 0, size, size);
+    const size = cv.width, sizeH = cv.height;
+    let scale, cx, cz;
+    g.clearRect(0, 0, size, sizeH);
     g.save();
-    g.beginPath();
-    g.arc(size / 2, size / 2, size / 2 - 3, 0, Math.PI * 2);
-    g.clip();
-    g.fillStyle = '#2a2420';
-    g.fillRect(0, 0, size, size);
-    g.drawImage(this.mapImg, (cx - view / 2) * S, (cz - view / 2) * S, view * S, view * S, 0, 0, size, size);
-    const toMap = (x, z) => [(x - cx) * scale + size / 2, (z - cz) * scale + size / 2];
+    if (full) {
+      scale = size / this.world.W;
+      cx = this.world.W / 2;
+      cz = this.world.H / 2;
+      g.drawImage(this.bigMapImg, 0, 0);
+    } else {
+      const view = 64, S = this.mapS;
+      scale = size / view;
+      cx = me.x;
+      cz = me.z;
+      g.beginPath();
+      g.arc(size / 2, size / 2, size / 2 - 3, 0, Math.PI * 2);
+      g.clip();
+      g.fillStyle = '#2a2420';
+      g.fillRect(0, 0, size, size);
+      g.drawImage(this.mapImg, (cx - view / 2) * S, (cz - view / 2) * S, view * S, view * S, 0, 0, size, size);
+    }
+    const toMap = (x, z) => [(x - cx) * scale + size / 2, (z - cz) * scale + sizeH / 2];
     const dot = (x, z, r, color, ring) => {
       const [px, pz] = toMap(x, z);
       g.fillStyle = color;
@@ -355,7 +445,10 @@ export class Hud {
       }
     };
     const bs = this.world.spots.box[snap.B[0]];
-    if (bs) dot(bs.x, bs.z, 4.5, '#6fb8ff', true);
+    if (bs) {
+      dot(bs.x, bs.z, 4.5, '#6fb8ff', true);
+      if (full) this.mapText(g, 'Mystery Box', ...toMap(bs.x, bs.z), '#a8d4ff');
+    }
     this.world.spots.loot.forEach((l, i) => {
       if (snap.C[i] && snap.C[i][0]) dot(l.x, l.z, 2.2, l.kind === 'chest' ? '#ffd65a' : '#f4e2b8');
     });
@@ -384,7 +477,7 @@ export class Hud {
       const dx = px - size / 2, dz = pz - size / 2;
       const d = Math.hypot(dx, dz);
       const maxR = size / 2 - 9;
-      const edge = d > maxR;
+      const edge = !full && d > maxR;
       if (edge) {
         px = size / 2 + (dx / d) * maxR;
         pz = size / 2 + (dz / d) * maxR;

@@ -1,6 +1,6 @@
 // Authoritative game simulation. Runs on the host (or in solo play) and produces
 // snapshots that the renderer / remote clients consume. No DOM or three.js here.
-import { WEAPONS, weaponStats, weaponsForMap, FORGE, FORGE2, RARITY, rollRarity } from '../data/weapons.js';
+import { WEAPONS, weaponStats, weaponsForMap, FORGE, FORGE2, FORGE_DMG, FORGE_BOSS, RARITY, rollRarity } from '../data/weapons.js';
 import { ZOMBIES, POWERUPS, PERKS } from '../data/zombies.js';
 import { CHARACTERS } from '../data/characters.js';
 import { MAPS, getMap } from '../data/maps.js';
@@ -16,6 +16,10 @@ export const ZTYPES = Object.keys(ZOMBIES);
 export const WIDS = Object.keys(WEAPONS);
 export const PLAYER_R = 0.4;
 export const BASE_SPEED = 5.4;
+// regular zombies never outrun a walking player, however late the round (screamer buffs aside)
+const ZOMBIE_SPEED_CAP = BASE_SPEED * 0.9;
+// weapon stats with a player's reserve-ammo bonus: stats object -> (multiplier -> stats)
+const WSTAT_CACHE = new WeakMap();
 const STATE_CODE = { alive: 0, down: 1, dead: 2 };
 const BLEED_TIME = 45; // seconds a downed player can wait for a revive
 // upgrade machine: price of the nth purchase (per player) is SHOP_COST + n * SHOP_STEP
@@ -41,6 +45,26 @@ const angDiff = (a, b) => {
   while (d < -Math.PI) d += Math.PI * 2;
   return d;
 };
+
+// Folds one input's press actions into a pending set. Swap presses add up (each one toggles);
+// a later slot or pick replaces an earlier one, and a slot press cancels queued swaps.
+export function mergeActs(into, acts) {
+  if (!acts) return;
+  for (const k in acts) {
+    const v = acts[k];
+    if (!v) continue;
+    if (k === 'swap') into.swap = (into.swap | 0) + (v | 0 || 1);
+    else into[k] = v;
+  }
+  if (acts.slot && !acts.swap) delete into.swap;
+}
+
+// weapon slot (0/1) a player ends on after this tick's slot/swap presses
+export function swapTarget(cur, acts) {
+  let w = acts.slot ? acts.slot - 1 : cur;
+  if ((acts.swap | 0) % 2) w = 1 - w;
+  return w;
+}
 
 // Shared with clients for local movement prediction.
 export function playerSpeed(p, weaponId) {
@@ -205,17 +229,23 @@ export class Game {
     }
   }
 
-  makeWeapon(id, forged = false, rarity = 0) {
+  makeWeapon(id, forged = 0, rarity = 0) {
+    forged = +forged || 0; // forge level 0 / 1 / 2 (booleans accepted); indexes the forge tables
     const st = weaponStats(id, forged, rarity);
     return { id, forged, rarity, mag: st.mag, reserve: st.reserve, forging: 0 };
   }
 
   // weapon stats for a specific player (rarity + forge + level-up bonuses)
+  // (called every frame, so reserve-boosted variants are cached per stats object and multiplier)
   wstat(p, w) {
     const st = weaponStats(w.id, w.forged, w.rarity || 0);
     const mult = (1 + 0.25 * (p.boons.bandolier || 0)) * (p.char === 'mags' ? 1.25 : 1);
     if (mult === 1) return st;
-    return { ...st, reserve: Math.round(st.reserve * mult) };
+    let byMult = WSTAT_CACHE.get(st);
+    if (!byMult) WSTAT_CACHE.set(st, (byMult = new Map()));
+    let out = byMult.get(mult);
+    if (!out) byMult.set(mult, (out = { ...st, reserve: Math.round(st.reserve * mult) }));
+    return out;
   }
 
   maxGrenades(p) {
@@ -225,8 +255,7 @@ export class Game {
   setInput(pid, input) {
     const p = this.players.find((q) => q.id === pid);
     if (!p) return;
-    const acts = input.acts || {};
-    for (const k in acts) if (acts[k]) p.acts[k] = acts[k];
+    mergeActs(p.acts, input.acts);
     p.input = input;
   }
 
@@ -362,8 +391,9 @@ export class Game {
         w.reserve -= take;
       }
     }
-    if (acts.swap && p.weapons[1]) {
-      p.cur = 1 - p.cur;
+    const want = swapTarget(p.cur, acts);
+    if (want !== p.cur && p.weapons[want]) {
+      p.cur = want;
       p.reloadT = 0;
       p.fireCd = 0.35;
       this.emit({ k: 'sfx', s: 'swap', x: p.x, z: p.z, p: p.id });
@@ -421,7 +451,7 @@ export class Game {
     const ca = Math.cos(p.ang), sa = Math.sin(p.ang);
     const ox = p.x + ca * 0.6, oz = p.z + sa * 0.6;
     const wi = WIDS.indexOf(w.id);
-    this.emit({ k: 'fire', p: p.id, w: wi, x: ox, z: oz, a: p.ang, f: w.forged ? 1 : 0 });
+    this.emit({ k: 'fire', p: p.id, w: wi, x: ox, z: oz, a: p.ang, f: w.forged || 0 });
     if (ws.type === 'hitscan' || ws.type === 'pellets') {
       const count = ws.pellets || 1;
       const spreadMult = p.moving ? 1.3 : 1;
@@ -429,7 +459,7 @@ export class Game {
         const a = p.ang + (this.rng() - 0.5) * 2 * ws.spread * spreadMult;
         const dx = Math.cos(a), dz = Math.sin(a);
         const end = this.hitscan(p.id, ox, oz, dx, dz, ws.range, dmg, ws.pierce || 1, 'bullet');
-        this.emit({ k: 't', x: ox, z: oz, x2: ox + dx * end, z2: oz + dz * end, w: wi, f: w.forged ? 1 : 0 });
+        this.emit({ k: 't', x: ox, z: oz, x2: ox + dx * end, z2: oz + dz * end, w: wi, f: w.forged || 0 });
       }
     } else if (ws.type === 'projectile' && ws.lob) {
       // arc the shell onto the cursor (clamped to range); it bursts where it lands
@@ -462,11 +492,11 @@ export class Game {
         if (!hasLOS(this.world, p.x, p.z, z.x, z.z)) continue;
         this.damageZombie(z, dmg, p.id, 'fire');
         z.burn = 3;
-        z.burnDps = ws.burn * (w.forged ? 2 : 1);
+        z.burnDps = ws.burn * FORGE_DMG[w.forged];
         z.burnBy = p.id;
       }
     } else if (ws.type === 'chain') {
-      this.chainLightning(p.id, ox, oz, p.ang, dmg, ws.chain, 0.5, ws.range, 'chain');
+      this.chainLightning(p.id, ox, oz, p.ang, dmg, ws.chain, 0.5, ws.range, 'chain', w.forged);
     }
   }
 
@@ -493,7 +523,7 @@ export class Game {
     return end;
   }
 
-  chainLightning(pid, ox, oz, ang, dmg, chains, stun, range, kind = 'ability') {
+  chainLightning(pid, ox, oz, ang, dmg, chains, stun, range, kind = 'ability', forged = 0) {
     let best = null, bestD = Infinity;
     for (const z of this.zombies) {
       if (z.state === 'rise' && z.t > 0.8) continue;
@@ -510,7 +540,7 @@ export class Game {
     const pts = [ox, oz];
     if (!best) {
       pts.push(ox + Math.cos(ang) * 6, oz + Math.sin(ang) * 6);
-      this.emit({ k: 'zap', pts });
+      this.emit({ k: 'zap', pts, f: forged });
       return;
     }
     const hit = new Set();
@@ -534,7 +564,7 @@ export class Game {
       }
       cur = next;
     }
-    this.emit({ k: 'zap', pts });
+    this.emit({ k: 'zap', pts, f: forged });
   }
 
   explode(x, z, radius, dmg, src) {
@@ -568,6 +598,7 @@ export class Game {
     }
     if (z.def.armor && !NO_ARMOR.has(kind)) dmg *= 1 - z.def.armor;
     if (z.rally > 0) dmg *= 0.6;
+    if ((z.boss || z.mini) && p && GUN_KILLS.has(kind)) dmg *= FORGE_BOSS[this.curWeapon(p).forged];
     if (this.instakill > 0 && !z.boss && !z.mini) dmg = Math.max(dmg, z.hp + 1);
     z.hp -= dmg;
     z.hurtT = 0.12;
@@ -690,7 +721,7 @@ export class Game {
     let ok = true;
     if (p.char === 'sparks') ok = this.placeTurret(p, st, scale);
     else if (p.char === 'doc') this.healField(p, st);
-    else if (p.char === 'mags') this.supplyDrop(p, st, ax, az);
+    else if (p.char === 'mags') this.supplyDrop(p, st);
     else if (p.char === 'rook') this.airstrike(p, st, scale, ax, az);
     else if (p.char === 'volt') {
       this.chainLightning(p.id, p.x, p.z, p.ang, st.damage * scale, st.chains, st.stun, 16);
@@ -723,18 +754,6 @@ export class Game {
       this.emit({ k: 'sfx', s: 'nope', p: p.id, x: p.x, z: p.z });
       return false;
     }
-    // never let a wall seal anyone into a pocket: each player must keep at least half
-    // of the area they could walk to before the wall went up
-    const extra = new Set(cells.map(([x, z]) => z * this.world.W + x));
-    for (const q of this.players) {
-      if (q.state === 'dead') continue;
-      const before = this.reachableCells(q.x, q.z);
-      if (this.reachableCells(q.x, q.z, extra) < (before - cells.length) * 0.5) {
-        this.emit({ k: 'sfx', s: 'nope', p: p.id, x: p.x, z: p.z });
-        this.emit({ k: 'note', p: p.id, s: q === p ? 'That would box you in' : 'That would box in ' + q.name });
-        return false;
-      }
-    }
     const s = {
       id: this.nextId++, kind: 'wall', owner: p.id, cells, x: cx, z: cz, horizontal,
       hp: st.wallHp, maxHp: st.wallHp, spikes: st.spikes, lvl: p.lvl, life: Infinity,
@@ -745,27 +764,6 @@ export class Game {
     for (let i = 0; i < mine.length - st.maxWalls; i++) this.destroyStruct(mine[i]);
     this.emit({ k: 'sfx', s: 'build', x: cx, z: cz });
     return true;
-  }
-
-  // Number of walkable cells reachable from (x,z), treating `extra` cell indices as blocked.
-  reachableCells(x, z, extra) {
-    const { W, H, grid } = this.world;
-    const seen = new Uint8Array(W * H);
-    const start = Math.floor(z) * W + Math.floor(x);
-    const stack = [start];
-    seen[start] = 1;
-    let n = 0;
-    while (stack.length) {
-      const i = stack.pop();
-      n++;
-      const cx = i % W, cz = (i - cx) / W;
-      for (const j of [cx > 0 ? i - 1 : -1, cx < W - 1 ? i + 1 : -1, cz > 0 ? i - W : -1, cz < H - 1 ? i + W : -1]) {
-        if (j < 0 || seen[j] || grid[j] !== 0 || this.sgrid[j] !== 0 || (extra && extra.has(j))) continue;
-        seen[j] = 1;
-        stack.push(j);
-      }
-    }
-    return n;
   }
 
   placeTurret(p, st, scale) {
@@ -810,36 +808,37 @@ export class Game {
   }
 
   // Mags: toss a supply bag toward the cursor (a second one lands at her feet at level 4+)
-  supplyDrop(p, st, ax, az) {
-    let dx = ax - p.x, dz = az - p.z;
-    const d = Math.hypot(dx, dz) || 1, dd = Math.min(7, d);
-    let x = p.x + (dx / d) * dd, z = p.z + (dz / d) * dd;
-    if (circleBlocked(this.world, this.sgrid, x, z, 0.4) || !hasLOS(this.world, p.x, p.z, x, z)) {
-      x = p.x;
-      z = p.z;
-    }
-    const spots = st.bags > 1 ? [[x, z], [p.x, p.z]] : [[x, z]];
-    for (const [bx, bz] of spots) {
-      this.pickups.push({
-        id: this.nextId++, kind: 'supply', x: bx, z: bz, t: st.life, took: [],
-        restock: Math.min(1, st.restock), grenades: st.grenades, mags: st.mags,
-      });
-      this.emit({ k: 'heal', x: bx, z: bz, r: 1.6, c: '#ffd65a' });
+  // bags land in a ring around Mags (never under him), aimed side first
+  supplyDrop(p, st) {
+    for (let i = 0; i < st.bags; i++) {
+      const base = p.ang + (i * Math.PI * 2) / st.bags;
+      let x = p.x + Math.cos(base) * 1.2, z = p.z + Math.sin(base) * 1.2;
+      for (const off of [0, 0.6, -0.6, 1.2, -1.2]) {
+        const bx = p.x + Math.cos(base + off) * 1.9, bz = p.z + Math.sin(base + off) * 1.9;
+        if (!circleBlocked(this.world, this.sgrid, bx, bz, 0.4)) {
+          x = bx;
+          z = bz;
+          break;
+        }
+      }
+      this.pickups.push({ id: this.nextId++, kind: 'supply', x, z, t: st.life, restock: Math.min(1, st.restock), grenades: st.grenades, mags: st.mags });
+      this.emit({ k: 'heal', x, z, r: 1.2, c: '#ffd65a' });
     }
     this.emit({ k: 'sfx', s: 'throw', x: p.x, z: p.z });
   }
 
-  // each living player can take from a supply bag once; it's gone when all have
+  // a bag goes to the first living player on it who is short on ammo
   grabSupply(k) {
     for (const p of this.players) {
-      if (p.state !== 'alive' || k.took.includes(p.id) || dist2(p.x, p.z, k.x, k.z) > 1.3 * 1.3) continue;
-      k.took.push(p.id);
+      if (p.state !== 'alive' || dist2(p.x, p.z, k.x, k.z) > 1.3 * 1.3) continue;
+      if (!p.weapons.some((w) => w && (w.reserve < this.wstat(p, w).reserve || (k.mags && w.mag < this.wstat(p, w).mag)))) continue;
       this.restock(p, k.restock, k.mags);
       if (k.grenades) p.grenades = Math.min(this.maxGrenades(p), p.grenades + k.grenades);
       this.emit({ k: 'sfx', s: 'pickup', x: k.x, z: k.z });
       this.emit({ k: 'float', x: k.x, z: k.z, s: '+Ammo', p: p.id });
+      this.pickups.splice(this.pickups.indexOf(k), 1);
+      return;
     }
-    if (this.players.every((p) => p.state !== 'alive' || k.took.includes(p.id))) this.pickups.splice(this.pickups.indexOf(k), 1);
   }
 
   // add `frac` of each weapon's max reserve (and optionally top up magazines)
@@ -1483,7 +1482,7 @@ export class Game {
     }
     const speed = def.fixedHp
       ? def.speed * this.diff.speed
-      : def.speed * this.diff.speed * (0.9 + this.rng() * 0.2) * (1 + Math.min(0.45, 0.025 * (this.wave - 1)));
+      : Math.min(ZOMBIE_SPEED_CAP, def.speed * this.diff.speed * (0.9 + this.rng() * 0.2) * (1 + Math.min(0.45, 0.025 * (this.wave - 1))));
     const zb = {
       id: this.nextId++, type, def, x, z, r: def.radius, cr: Math.min(def.radius, 0.45), ang: this.rng() * Math.PI * 2,
       hp, maxHp: hp, speed, damage: def.damage * this.diff.damage,
@@ -1582,17 +1581,24 @@ export class Game {
       const reach = z.r + tgt.r + 0.45;
       const big = z.boss || z.mini;
       z.atkCd -= dt;
+      // a wall between this zombie and its target soaks the attack instead
+      const wall = dist < reach + 0.8 ? this.structBetween(z.x, z.z, tgt.x, tgt.z) : null;
       if (z.state === 'attack') {
         z.t -= dt;
         if (!big && dist > reach * 0.6) moveCircle(this.world, this.sgrid, z, (dx / dist) * z.speed * 1.4 * dt, (dz / dist) * z.speed * 1.4 * dt, z.cr);
         if (z.t <= 0) {
           z.state = 'move';
-          if (dist < reach + (big ? 0.5 : 0.8)) {
+          if (dist < reach + (big ? 0.5 : 0.8) && !wall) {
             this.hurtPlayer(tgt, z.damage);
             if (tgt.boons.thorns) this.damageZombie(z, 60 * tgt.boons.thorns * (1 + 0.15 * (this.wave - 1)), tgt.id, 'spikes');
           }
           z.atkCd = z.def.attackRate;
         }
+        continue;
+      }
+      if (wall) {
+        z.ang = Math.atan2(dz, dx);
+        this.hitStruct(z, wall, dx / dist, dz / dist);
         continue;
       }
       if (dist < reach + (big ? 0 : 0.4) && z.atkCd <= 0) {
@@ -1677,12 +1683,30 @@ export class Game {
     const s = this.structs.find((q) => q.id === sid);
     if (!s) return;
     z.atkCd -= dt;
-    if (z.atkCd <= 0) {
-      z.atkCd = z.def.attackRate;
-      this.emit({ k: 'hitwall', x: z.x + mx * 0.8, z: z.z + mz * 0.8 });
-      this.damageStruct(s, z.damage * (z.boss || z.mini ? 4 : 1.5));
-      if (s.spikes) this.damageZombie(z, s.spikes * (1 + 0.15 * (this.wave - 1)), s.owner, 'spikes');
+    this.hitStruct(z, s, mx, mz);
+  }
+
+  // one swing at a structure once the attack cooldown is up (every zombie type can do this)
+  hitStruct(z, s, mx, mz) {
+    if (z.atkCd > 0) return;
+    z.atkCd = z.def.attackRate;
+    this.emit({ k: 'hitwall', x: z.x + mx * 0.8, z: z.z + mz * 0.8 });
+    this.damageStruct(s, z.damage * (z.boss || z.mini ? 4 : 1.5));
+    if (s.spikes) this.damageZombie(z, s.spikes * (1 + 0.15 * (this.wave - 1)), s.owner, 'spikes');
+  }
+
+  // first structure on the segment between two points (sampled every 0.3), or null
+  structBetween(x1, z1, x2, z2) {
+    if (!this.structs.length) return null;
+    const { W, H } = this.world;
+    const d = Math.hypot(x2 - x1, z2 - z1), n = Math.ceil(d / 0.3);
+    for (let i = 1; i < n; i++) {
+      const cx = Math.floor(x1 + ((x2 - x1) * i) / n), cz = Math.floor(z1 + ((z2 - z1) * i) / n);
+      if (cx < 0 || cz < 0 || cx >= W || cz >= H) continue;
+      const sid = this.sgrid[cz * W + cx];
+      if (sid) return this.structs.find((q) => q.id === sid) || null;
     }
+    return null;
   }
 
   // Regular zombie special abilities. Returns true if it consumed the update.
@@ -1692,7 +1716,7 @@ export class Game {
     if (z.state === 'leap') {
       z.t -= dt;
       moveCircle(this.world, this.sgrid, z, z.lvx * dt, z.lvz * dt, z.cr);
-      if (dist < z.r + tgt.r + 0.5 && !z.leapHit) {
+      if (dist < z.r + tgt.r + 0.5 && !z.leapHit && !this.structBetween(z.x, z.z, tgt.x, tgt.z)) {
         z.leapHit = true;
         this.hurtPlayer(tgt, z.damage);
       }
@@ -1728,7 +1752,7 @@ export class Game {
       z.ang = Math.atan2(tgt.z - z.z, tgt.x - z.x);
       return true;
     }
-    if (def.leap && z.los && dist > def.leap.min && dist < def.leap.max) {
+    if (def.leap && z.los && dist > def.leap.min && dist < def.leap.max && !this.structBetween(z.x, z.z, tgt.x, tgt.z)) {
       z.specialCd = def.leap.cooldown;
       z.state = 'windup';
       z.pending = 'leap';
@@ -1741,7 +1765,7 @@ export class Game {
       const a = this.rng() * Math.PI * 2;
       const r = 2.5 + this.rng() * 2;
       const nx = tgt.x + Math.cos(a) * r, nz = tgt.z + Math.sin(a) * r;
-      if (!circleBlocked(this.world, this.sgrid, nx, nz, z.cr) && hasLOS(this.world, tgt.x, tgt.z, nx, nz)) {
+      if (!circleBlocked(this.world, this.sgrid, nx, nz, z.cr) && hasLOS(this.world, tgt.x, tgt.z, nx, nz) && !this.structBetween(tgt.x, tgt.z, nx, nz)) {
         this.emit({ k: 'blink', x: z.x, z: z.z, x2: nx, z2: nz });
         z.x = nx;
         z.z = nz;
@@ -2115,7 +2139,7 @@ export class Game {
                   done = true;
                 } else {
                   this.damageZombie(z, pr.dmg, pr.pid, 'bullet');
-                  if (pr.kind === 'ray') this.emit({ k: 'rayhit', x: pr.x, z: pr.z, f: pr.forged ? 1 : 0 });
+                  if (pr.kind === 'ray') this.emit({ k: 'rayhit', x: pr.x, z: pr.z, f: pr.forged || 0 });
                   pr.lastHit = z.id;
                   pr.dmg *= 0.85;
                   done = --pr.pierce <= 0;
@@ -2365,7 +2389,7 @@ export class Game {
         z.id, ZTYPES.indexOf(z.type), r2(z.x), r2(z.z), r2(z.ang), r2(z.hp / z.maxHp),
         ZSTATE[z.stun > 0 ? 'stun' : z.state] ?? 1, r2(z.state === 'rise' ? z.t : 0), (z.burn > 0 ? 1 : 0) | (z.hurtT > 0 ? 2 : 0) | (z.buff > 0 ? 4 : 0) | (z.enraged ? 8 : 0) | (z.rally > 0 ? 16 : 0),
       ]),
-      R: this.projs.map((p) => [p.id, p.kind, r2(p.x), r2(p.y), r2(p.z), p.kind === 'hook' ? p.zid : p.forged ? 1 : 0]),
+      R: this.projs.map((p) => [p.id, p.kind, r2(p.x), r2(p.y), r2(p.z), p.kind === 'hook' ? p.zid : p.forged || 0]),
       S: this.structs.map((s) => ({
         id: s.id, k: s.kind, o: s.owner, x: r2(s.x), z: r2(s.z), c: s.cells, hp: r2(s.hp / s.maxHp), a: r2(s.ang || 0),
         l: s.lvl, sp: s.spikes ? 1 : 0, lf: s.kind === 'turret' ? r2(s.life / s.maxLife) : 1,
