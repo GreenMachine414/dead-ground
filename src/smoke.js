@@ -4,6 +4,7 @@ import { Game } from './game/sim.js';
 import { MAPS } from './data/maps.js';
 import { Net, PROTOCOL } from './net.js';
 import { resolveBinds } from './keybinds.js';
+import { hasVulgar } from './bugreport.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -66,6 +67,39 @@ export async function runSmoke(app) {
     app.rebind('map', 'KeyN');
     await wait(200);
     await shot('02b-settings');
+    // bug reports: the filter, limits, cooldown and editing (app.smoke skips the real send)
+    const bad = ['what the fuck', 'this is BULLSHIT', 'sh1t gun', 'f*ck', 'f u c k', 'fuuuuck', 'a$$', 'you ass'];
+    const fine = ['the class menu', 'assassin bug in Scunthorpe', 'cockpit glitch', 'I hit a shot, it passed through', 'round 15 crash!'];
+    check('bug-filter-blocks', bad.every(hasVulgar));
+    check('bug-filter-allows', !fine.some(hasVulgar));
+    app.profile.bugReports = [];
+    app.go('bugs');
+    const box = document.querySelector('#bug-text');
+    const submit = async (text) => {
+      box.value = text;
+      box.dispatchEvent(new Event('input'));
+      await app.sendBug();
+      return document.querySelector('#bug-status').textContent;
+    };
+    check('bug-rejects-vulgar', /clean/.test(await submit('the gun is shit and broke')) && !app.profile.bugReports.length);
+    check('bug-rejects-short', /at least/.test(await submit('bad')));
+    check('bug-maxlength', box.maxLength === 1000);
+    await submit('Zombies walk through the fence on Harvest Farm round 4.');
+    const sent = app.profile.bugReports[0];
+    check('bug-saved', app.profile.bugReports.length === 1 && sent.edits === 0);
+    app.editBug(sent.id);
+    check('bug-cooldown', /wait/.test(await submit(sent.text + ' Also the barn.')));
+    sent.sent -= 31000;
+    await submit(sent.text + ' Also the barn.');
+    const edited = app.profile.bugReports[0];
+    check('bug-edit', app.profile.bugReports.length === 1 && edited.id === sent.id && edited.edits === 1 && /barn/.test(edited.text));
+    box.value = 'The minimap flickers when the big map closes.';
+    app.bugCount();
+    await wait(200);
+    await shot('02c-bugs');
+    app.show('main');
+    await wait(150);
+    await shot('00b-main-bugtab');
 
     const chars = ['brick', 'sparks', 'mags', 'rook', 'volt'];
     for (const m of MAPS) {

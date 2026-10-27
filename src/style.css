@@ -260,6 +260,89 @@ input[type='range'] {
 .profile-strip span b {
   color: var(--gold);
 }
+.bug-tab {
+  position: absolute;
+  right: 26px;
+  bottom: 24px;
+  font-size: 14px;
+  padding: 7px 14px;
+}
+
+/* bug reports */
+textarea {
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.45;
+  background: var(--parch);
+  color: var(--ink);
+  border: 3px solid var(--edge);
+  border-radius: 12px;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 120px;
+  user-select: text;
+}
+.bug-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.bug-row .big {
+  margin-left: auto;
+}
+#bug-status.err {
+  color: var(--berry);
+  font-weight: 700;
+}
+#bug-status.ok {
+  color: var(--leaf);
+  font-weight: 700;
+}
+#bug-count.near {
+  color: var(--orange);
+}
+.bug-mine {
+  max-width: 400px;
+}
+.bug-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.bug-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(36, 23, 15, 0.55);
+  border: 2px solid var(--edge);
+}
+.bug-item.editing {
+  border-color: var(--gold);
+}
+.bug-meta {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--gold);
+}
+.bug-snip {
+  grid-column: 1;
+  font-size: 14px;
+  color: var(--parch);
+  overflow-wrap: anywhere;
+}
+.bug-item button {
+  grid-row: 1 / 3;
+  grid-column: 2;
+  padding: 6px 12px;
+  font-size: 14px;
+}
 
 /* lobby */
 .lobby-grid {
@@ -540,7 +623,7 @@ select {
   justify-content: space-between;
   align-items: center;
 }
-.binds-head h3 {
+.form h3 {
   margin: 0;
   font-family: var(--display);
   color: var(--gold);

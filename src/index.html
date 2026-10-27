@@ -5,7 +5,7 @@
     <title>Dead Ground</title>
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: https://0.peerjs.com; img-src 'self' data: blob:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: https://0.peerjs.com https://api.web3forms.com; img-src 'self' data: blob:"
     />
     <link rel="stylesheet" href="style.css" />
   </head>
@@ -31,6 +31,24 @@
           <button data-go="quit" class="ghost">Quit</button>
         </div>
         <div class="profile-strip"><span id="main-name"></span><span id="main-salvage"></span><span id="main-progress"></span></div>
+        <button data-go="bugs" class="bug-tab ghost">Bug Reports/Feedback</button>
+      </section>
+
+      <!-- bug reports -->
+      <section class="screen" id="screen-bugs">
+        <header class="screen-head"><button class="back" data-go="main">← Back</button><h2>Bug Reports &amp; Feedback</h2></header>
+        <div class="settings-wrap">
+          <div class="form panel bug-form">
+            <h3 id="bug-head">Report a bug or share feedback</h3>
+            <textarea id="bug-text" rows="9" placeholder="Found a bug? Say what happened, on which map and round, and what you were doing. Ideas and feedback are welcome too."></textarea>
+            <div class="bug-row"><span id="bug-status" class="hint"></span><span id="bug-count" class="hint"></span></div>
+            <div class="bug-row"><button id="bug-cancel" class="ghost">Cancel edit</button><button id="bug-send" class="big">Submit</button></div>
+          </div>
+          <div class="form panel bug-mine">
+            <h3>My reports</h3>
+            <div id="bug-list" class="bug-list"></div>
+          </div>
+        </div>
       </section>
 
       <!-- lobby (solo + multiplayer) -->
