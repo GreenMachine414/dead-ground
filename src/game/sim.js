@@ -121,7 +121,6 @@ export class Game {
     this.hazards = [];
     this.strikes = [];
     this.events = [];
-    this.diff = this.map.difficulty;
     this.weaponPool = weaponsForMap(mode === 'endless' ? Math.max(unlockedMap, mapId) : mapId).filter((w) => w !== 'pistol');
     this.wave = 0;
     this.waveState = 'break';
@@ -656,7 +655,7 @@ export class Game {
       if (q === p || z.boss || z.mini) this.gainXp(q, xp);
       else this.gainXp(q, Math.round(xp * 0.25));
     }
-    if (z.def.explode) this.explode(z.x, z.z, z.def.explode.radius, z.def.explode.damage * this.diff.damage, { enemy: true });
+    if (z.def.explode) this.explode(z.x, z.z, z.def.explode.radius, z.def.explode.damage, { enemy: true });
     if (z.boss || z.mini) {
       this.lastBossPos = { x: z.x, z: z.z };
       for (const q of this.players) if (q !== p) this.givePoints(q, z.boss ? 1000 : 400);
@@ -824,7 +823,7 @@ export class Game {
         this.revivePlayer(q, p);
       }
     }
-    this.hazards.push({ id: this.nextId++, kind: 'heal', x: p.x, z: p.z, r: 4, t: st.zone, heal: st.zoneHeal, dmg: st.zoneDamage, pid: p.id });
+    this.hazards.push({ id: this.nextId++, kind: 'heal', x: p.x, z: p.z, r: 4, t: st.zone, heal: st.zoneHeal, dmg: st.zoneDamage, pid: p.id, follow: st.follow });
     this.emit({ k: 'heal', x: p.x, z: p.z, r: st.radius });
   }
 
@@ -1488,10 +1487,10 @@ export class Game {
     this.wave++;
     const n = this.n;
     this.waveState = 'active';
-    this.toSpawn = Math.round((5 + this.wave * 3) * (1 + 0.6 * (n - 1)) * this.diff.density) + Math.max(0, this.wave - 11) * 2;
+    this.toSpawn = Math.round((5 + this.wave * 3) * (1 + 0.6 * (n - 1))) + Math.max(0, this.wave - 11) * 2;
     // spawns trickle in across the round, and at most ~45% of it is alive at once,
     // so a single Kaboom can't wipe most of a late wave
-    this.spawnInterval = Math.max(0.75, 2.2 - this.wave * 0.08) / this.diff.spawnRate / (1 + 0.35 * (n - 1));
+    this.spawnInterval = Math.max(0.75, 2.2 - this.wave * 0.08) / (1 + 0.35 * (n - 1));
     this.maxAlive = Math.min(64, 20 + this.wave + 6 * (n - 1), Math.max(8, Math.ceil(this.toSpawn * 0.45)));
     this.spawnT = 1;
     this.powerupsThisWave = 0;
@@ -1565,14 +1564,14 @@ export class Game {
     } else if (def.egg || def.clone) {
       hp = def.hp * (1 + 0.5 * (n - 1)) * (1 + 0.05 * this.wave);
     } else {
-      hp = def.hp * (1 + 0.16 * (this.wave - 1)) * this.diff.hp * (1 + 0.35 * (n - 1));
+      hp = def.hp * (1 + 0.16 * (this.wave - 1)) * (1 + 0.35 * (n - 1));
     }
     const speed = def.fixedHp
-      ? def.speed * this.diff.speed
-      : Math.min(ZOMBIE_SPEED_CAP, def.speed * this.diff.speed * (0.9 + this.rng() * 0.2) * (1 + Math.min(0.45, 0.025 * (this.wave - 1))));
+      ? def.speed
+      : Math.min(ZOMBIE_SPEED_CAP, def.speed * (0.9 + this.rng() * 0.2) * (1 + Math.min(0.45, 0.025 * (this.wave - 1))));
     const zb = {
       id: this.nextId++, type, def, x, z, r: def.radius, cr: Math.min(def.radius, 0.45), ang: this.rng() * Math.PI * 2,
-      hp, maxHp: hp, speed, damage: def.damage * this.diff.damage,
+      hp, maxHp: hp, speed, damage: def.damage,
       state: rise ? 'rise' : 'move', t: rise ? (def.boss || def.miniboss ? 2.4 : 1.4) : 0,
       atkCd: 0.5, cds: {}, boss: !!def.boss, mini: !!def.miniboss,
       burn: 0, stun: 0, buff: 0, losT: 0, los: false, target: null, targetT: 0, specialCd: 1 + this.rng() * 2,
@@ -1678,7 +1677,7 @@ export class Game {
           if (dist < reach + (big ? 0.5 : 0.8) && !wall) {
             if (z.def.ignite && tgt.invuln <= 0) {
               tgt.burnT = z.def.ignite.time;
-              tgt.burnDps = z.def.ignite.dps * this.diff.damage;
+              tgt.burnDps = z.def.ignite.dps;
             }
             this.hurtPlayer(tgt, z.damage);
             if (tgt.boons.thorns) this.damageZombie(z, 60 * tgt.boons.thorns * (1 + 0.15 * (this.wave - 1)), tgt.id, 'spikes');
@@ -1730,7 +1729,7 @@ export class Game {
         z.trailT -= dt;
         if (z.trailT <= 0) {
           z.trailT = 0.5;
-          this.hazards.push({ id: this.nextId++, kind: 'fire', x: z.x, z: z.z, r: 1.1, t: 3, dps: 14 * this.diff.damage });
+          this.hazards.push({ id: this.nextId++, kind: 'fire', x: z.x, z: z.z, r: 1.1, t: 3, dps: 14 });
         }
       }
     }
@@ -1820,7 +1819,7 @@ export class Game {
         z.state = 'move';
         if (z.pending === 'spit') {
           const a = Math.atan2(tgt.z - z.z, tgt.x - z.x);
-          this.projs.push({ id: this.nextId++, kind: 'spit', owner: 'z', x: z.x, y: 1.2, z: z.z, vx: Math.cos(a) * 12, vy: 0, vz: Math.sin(a) * 12, g: 0, dmg: def.spit.damage * this.diff.damage, life: 1.4, r: 0.3 });
+          this.projs.push({ id: this.nextId++, kind: 'spit', owner: 'z', x: z.x, y: 1.2, z: z.z, vx: Math.cos(a) * 12, vy: 0, vz: Math.sin(a) * 12, g: 0, dmg: def.spit.damage, life: 1.4, r: 0.3 });
           this.emit({ k: 'sfx', s: 'spit', x: z.x, z: z.z });
         } else if (z.pending === 'leap') {
           const a = Math.atan2(tgt.z - z.z, tgt.x - z.x);
@@ -1875,7 +1874,7 @@ export class Game {
       z.enraged = true;
       z.speed *= 1.35;
       this.emit({ k: 'msg', s: def.name + ' is ENRAGED!' });
-      this.hazards.push({ id: this.nextId++, kind: 'ring', x: z.x, z: z.z, r: 0.5, maxR: 15, speed: 9, t: 2, dmg: 30 * this.diff.damage, hit: new Set() });
+      this.hazards.push({ id: this.nextId++, kind: 'ring', x: z.x, z: z.z, r: 0.5, maxR: 15, speed: 9, t: 2, dmg: 30, hit: new Set() });
       if (def.summon) this.summonAround(z, def.summon);
     }
     const cdMult = enraged ? 0.6 : 1;
@@ -1913,7 +1912,7 @@ export class Game {
       z.ang = Math.atan2(v.z - z.z, v.x - z.x);
       if (z.tickT <= 0) {
         z.tickT = 0.25;
-        this.hurtPlayer(v, 7 * this.diff.damage);
+        this.hurtPlayer(v, 7);
         z.hp = Math.min(z.maxHp, z.hp + z.maxHp * 0.004);
         this.emit({ k: 'beam', x: z.x, z: z.z, x2: v.x, z2: v.z });
       }
@@ -1941,7 +1940,7 @@ export class Game {
       } else if (ab === 'throw') {
         const T = 1.1, g = 20;
         const tx = tgt.x + (this.rng() - 0.5) * 2, tz = tgt.z + (this.rng() - 0.5) * 2;
-        this.projs.push({ id: this.nextId++, kind: 'rock', owner: 'z', x: z.x, y: 3, z: z.z, vx: (tx - z.x) / T, vz: (tz - z.z) / T, vy: (0.5 * g * T * T - 3) / T, g, dmg: 40 * this.diff.damage, splash: 2.6, life: T + 0.5, r: 0.5, land: true });
+        this.projs.push({ id: this.nextId++, kind: 'rock', owner: 'z', x: z.x, y: 3, z: z.z, vx: (tx - z.x) / T, vz: (tz - z.z) / T, vy: (0.5 * g * T * T - 3) / T, g, dmg: 40, splash: 2.6, life: T + 0.5, r: 0.5, land: true });
       } else if (ab === 'volley') {
         const base = Math.atan2(tgt.z - z.z, tgt.x - z.x);
         const count = z.type === 'hivequeen' ? 9 : 6;
@@ -1949,7 +1948,7 @@ export class Game {
         for (let i = 0; i < count; i++) {
           const a = base + (i - (count - 1) / 2) * 0.16;
           const sp = kind === 'rocket' ? 13 : 12;
-          this.projs.push({ id: this.nextId++, kind, owner: 'z', x: z.x, y: 1.6, z: z.z, vx: Math.cos(a) * sp, vy: 0, vz: Math.sin(a) * sp, g: 0, dmg: (kind === 'rocket' ? 22 : 16) * this.diff.damage, splash: kind === 'rocket' ? 2 : 0, life: 2.2, r: 0.35 });
+          this.projs.push({ id: this.nextId++, kind, owner: 'z', x: z.x, y: 1.6, z: z.z, vx: Math.cos(a) * sp, vy: 0, vz: Math.sin(a) * sp, g: 0, dmg: (kind === 'rocket' ? 22 : 16), splash: kind === 'rocket' ? 2 : 0, life: 2.2, r: 0.35 });
         }
         this.emit({ k: 'sfx', s: kind === 'rocket' ? 'rocket' : 'spit', x: z.x, z: z.z });
       } else if (ab === 'summon') {
@@ -1966,7 +1965,7 @@ export class Game {
         z.ang = a;
         this.projs.push({
           id: this.nextId++, kind: 'hook', owner: 'z', zid: z.id, x: z.x + Math.cos(a) * z.r, y: 1.4, z: z.z + Math.sin(a) * z.r,
-          vx: Math.cos(a) * 24, vy: 0, vz: Math.sin(a) * 24, g: 0, dmg: 12 * this.diff.damage, life: 0.8, r: 0.45,
+          vx: Math.cos(a) * 24, vy: 0, vz: Math.sin(a) * 24, g: 0, dmg: 12, life: 0.8, r: 0.45,
         });
         this.emit({ k: 'sfx', s: 'throw', x: z.x, z: z.z });
       } else if (ab === 'bile') {
@@ -1980,7 +1979,7 @@ export class Game {
           if (cx < 0 || cz < 0 || cx >= W || cz >= this.world.H) break;
           const v = this.world.grid[cz * W + cx];
           if (v === 1 || v === 2) break;
-          this.hazards.push({ id: this.nextId++, kind: 'acid', x: bx, z: bz, r: 1.5, t: 5 + i * 0.15, dps: 18 * this.diff.damage });
+          this.hazards.push({ id: this.nextId++, kind: 'acid', x: bx, z: bz, r: 1.5, t: 5 + i * 0.15, dps: 18 });
           n++;
         }
         this.emit({ k: 'bile', x: z.x, z: z.z, a, d: z.r + 1 + n * 1.7 });
@@ -2000,7 +1999,7 @@ export class Game {
           this.emit({ k: 'strike', x: p.x, z: p.z, r: 4 });
           for (let i = 0; i < 4; i++) {
             const a = this.rng() * Math.PI * 2, r = Math.sqrt(this.rng()) * 3;
-            this.strikes.push({ t: 1.3 + i * 0.22, x: p.x + Math.cos(a) * r, z: p.z + Math.sin(a) * r, dmg: 32 * this.diff.damage, r: 2.2, enemy: true });
+            this.strikes.push({ t: 1.3 + i * 0.22, x: p.x + Math.cos(a) * r, z: p.z + Math.sin(a) * r, dmg: 32, r: 2.2, enemy: true });
           }
         }
         this.emit({ k: 'sfx', s: 'strike', x: z.x, z: z.z });
@@ -2061,7 +2060,7 @@ export class Game {
           }
         }
       } else if (ab === 'shockwave') {
-        this.hazards.push({ id: this.nextId++, kind: 'ring', x: z.x, z: z.z, r: 0.5, maxR: 15, speed: 9, t: 2, dmg: 30 * this.diff.damage, hit: new Set() });
+        this.hazards.push({ id: this.nextId++, kind: 'ring', x: z.x, z: z.z, r: 0.5, maxR: 15, speed: 9, t: 2, dmg: 30, hit: new Set() });
         this.emit({ k: 'shake', i: 0.5 });
       } else if (ab === 'leap') {
         const a = Math.atan2(tgt.z - z.z, tgt.x - z.x);
@@ -2269,7 +2268,7 @@ export class Game {
   }
 
   acidPuddle(x, z) {
-    this.hazards.push({ id: this.nextId++, kind: 'acid', x, z, r: 1.3, t: 3, dps: 12 * this.diff.damage });
+    this.hazards.push({ id: this.nextId++, kind: 'acid', x, z, r: 1.3, t: 3, dps: 12 });
   }
 
   updateHazards(dt) {
@@ -2288,6 +2287,13 @@ export class Game {
           }
         }
       } else if (h.kind === 'heal') {
+        if (h.follow) {
+          const o = this.players.find((q) => q.id === h.pid);
+          if (o && o.state !== 'dead') {
+            h.x = o.x;
+            h.z = o.z;
+          }
+        }
         for (const p of this.players) if (p.state === 'alive' && dist2(p.x, p.z, h.x, h.z) < h.r * h.r) p.hp = Math.min(p.maxHp, p.hp + h.heal * dt);
         if (h.dmg) for (const z of [...this.zombies]) if (dist2(z.x, z.z, h.x, h.z) < h.r * h.r) this.damageZombie(z, h.dmg * dt, h.pid, 'zone');
       } else if (h.kind === 'napalm') {

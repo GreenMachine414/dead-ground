@@ -1660,7 +1660,7 @@ export class Renderer {
       return;
     }
     if (kind === 'item') {
-      const col = { radio_part: '#ffd04a', keycard: '#5ac8ff', charge: '#ff7a4a', sample: '#7affd8', vial: '#7aff7a' }[sub] || '#ffffff';
+      const col = { radio_part: '#ffd04a', fuel: '#ff5a3a', keycard: '#5ac8ff', charge: '#ff7a4a', sample: '#7affd8', vial: '#7aff7a' }[sub] || '#ffffff';
       const g = c.createLinearGradient(0, Y, 0, Y - u * 5);
       g.addColorStop(0, S.rgba(col, 0.45));
       g.addColorStop(1, S.rgba(col, 0));

@@ -38,7 +38,7 @@ export const WEAPONS = {
     ammoCost: 1000, color: 0xffffff, sound: 'sniper', len: 1.25, gunColor: 0x252a20, boxWeight: 7,
   },
   flamethrower: {
-    name: 'Inferno', map: 3, type: 'flame', damage: 22, burn: 30, rate: 20, auto: true,
+    name: 'Inferno', map: 3, minRarity: 2, type: 'flame', damage: 22, burn: 30, rate: 20, auto: true,
     mag: 120, reserve: 480, reload: 3.0, spread: 0.35, range: 7.5,
     ammoCost: 1100, color: 0xff7020, sound: 'flame', len: 0.9, gunColor: 0x8a2a1a, boxWeight: 7,
   },
@@ -63,7 +63,7 @@ export const WEAPONS = {
     ammoCost: 1800, color: 0xffc060, sound: 'smg', len: 1.2, gunColor: 0x3a3a3a, boxWeight: 4,
   },
   crossbow: {
-    name: 'Bolt Caster', map: 2, type: 'projectile', damage: 100, splash: 2.6, rate: 1.5, auto: false,
+    name: 'Bolt Caster', map: 2, type: 'projectile', damage: 175, splash: 2.6, rate: 1.5, auto: false,
     mag: 3, reserve: 30, reload: 2.2, spread: 0, range: 34, projSpeed: 30, proj: 'bolt',
     ammoCost: 900, color: 0xff4040, sound: 'thump', len: 0.85, gunColor: 0x5a4030, boxWeight: 6,
   },

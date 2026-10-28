@@ -10,18 +10,18 @@ export const CHARACTERS = {
     desc: 'Builds wooden walls that block zombies. Zombies must smash through them.',
     passive: '+25 max health',
     levels: [
-      'Wall (500 HP), 2 charges, 3 walls max',
-      'Wall HP 800, 3 charges, 4 walls max',
+      'Wall (250 HP), 2 charges, 3 walls max',
+      'Wall HP 400, 3 charges, 4 walls max',
       'Spiked walls damage attackers',
-      'Wall HP 1300, 4 charges, faster recharge',
-      'Reinforced steel walls: 2000 HP, longer, heavy spikes, 5 walls max',
+      'Wall HP 650, 4 charges, faster recharge',
+      'Reinforced steel walls: 1000 HP, longer, heavy spikes, 5 walls max',
     ],
     stats(lvl) {
       return {
-        wallHp: [500, 800, 950, 1300, 2000][lvl - 1],
+        wallHp: [250, 400, 475, 650, 1000][lvl - 1],
         charges: [2, 3, 3, 4, 4][lvl - 1],
         cooldown: [28, 24.5, 22, 18.5, 16][lvl - 1],
-        spikes: [0, 0, 25, 40, 70][lvl - 1],
+        spikes: [0, 0, 16, 26, 45][lvl - 1],
         length: lvl >= 5 ? 5 : 3,
         maxWalls: [3, 4, 4, 4, 5][lvl - 1],
       };
@@ -62,7 +62,7 @@ export const CHARACTERS = {
       'Heal 55, zone lasts longer',
       'Revives downed allies in range',
       'Heal 70, radius 6.5, zone damages zombies',
-      'Heal 85 + 1.5s invulnerability for allies',
+      'Heal 85 + 1.5s invulnerability, healing zone moves with Doc',
     ],
     stats(lvl) {
       return {
@@ -73,6 +73,7 @@ export const CHARACTERS = {
         zoneDamage: [0, 0, 0, 18, 25][lvl - 1],
         revive: lvl >= 3,
         invuln: lvl >= 5 ? 1.5 : 0,
+        follow: lvl >= 5,
         cooldown: [38.5, 37, 36, 33, 32][lvl - 1],
       };
     },

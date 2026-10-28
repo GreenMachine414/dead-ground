@@ -1,4 +1,4 @@
-// Campaign maps. Each map: layout builder, 2D theme, difficulty, zombie pool,
+// Campaign maps. Each map: layout builder, 2D theme, zombie pool (zombies are equally tough on every map),
 // bosses, and a short story made of objective steps.
 //
 // Story step types:
@@ -25,7 +25,6 @@ export const MAPS = [
       ground: '#7fb35a', ground2: '#93c266', path: '#c9a66b', water: '#5aa9d6', wall: '#c99b6d', roof: '#b5523b',
       dark: 0.0, tree: 'oak', particles: 'leaves', floor: '#a0764c',
     },
-    difficulty: { hp: 1.0, speed: 1.0, damage: 1.0, density: 1.0, spawnRate: 1.0 },
     zombies: [
       { type: 'walker', weight: 10, minWave: 1 },
       { type: 'runner', weight: 3, minWave: 2 },
@@ -38,9 +37,12 @@ export const MAPS = [
         'The outbreak reached the farm overnight. The old ham radio in the farmhouse can reach the National Guard — but scavengers stripped it for parts. Find the parts, call for help, and survive until the chopper arrives.',
       steps: [
         { type: 'collect', item: 'radio_part', label: 'Radio Part', count: 3, spots: 'part', text: 'Find the 3 missing radio parts scattered around the farm.' },
+        { type: 'collect', item: 'fuel', label: 'Fuel Can', count: 2, spots: 'part', round: 3, text: "The radio's generator is dry. Fuel cans turn up by round 3 — find 2." },
         { type: 'activate', spots: ['radio'], hold: 6, label: 'Repair the radio', text: 'Repair the ham radio inside the farmhouse.' },
         { type: 'survive', time: 60, horde: true, text: 'The Guard is triangulating your signal. Survive the horde!' },
         { type: 'boss', zombie: 'harvester', spot: 'barn', nextRound: true, text: 'Something massive is tearing out of the barn. Kill The Harvester!' },
+        { type: 'activate', spots: ['helipad'], hold: 5, label: 'Light the flares', text: 'Mark the landing zone: light the flares at the helipad.' },
+        { type: 'defend', spot: 'helipad', radius: 6, time: 40, text: 'Hold the landing zone while the chopper circles in.' },
         { type: 'extract', spot: 'helipad', radius: 4, text: 'The chopper is landing in the east meadow. Get to the helipad!' },
       ],
       outro: 'The chopper lifts off as the horde swarms the helipad. The pilot says downtown is the next safe zone...',
@@ -172,7 +174,6 @@ export const MAPS = [
       ground: '#6f7468', ground2: '#7b8074', path: '#4a4d52', water: '#4a86b0', wall: '#8b8f99', roof: '#5b6170',
       dark: 0.42, tree: 'oak', particles: 'rain', floor: '#5e5a56',
     },
-    difficulty: { hp: 1.15, speed: 1.05, damage: 1.1, density: 1.1, spawnRate: 1.1 },
     zombies: [
       { type: 'walker', weight: 10, minWave: 1 },
       { type: 'runner', weight: 3, minWave: 2 },
@@ -191,6 +192,9 @@ export const MAPS = [
         { type: 'souls', spot: 'subway', radius: 7, count: 15, text: "The gate's bio-lock needs feeding. Kill 15 zombies near the subway entrance." },
         { type: 'defend', spot: 'subway', radius: 6, time: 45, horde: true, text: 'Hold the subway entrance while the security gate opens.' },
         { type: 'boss', zombie: 'abomination', spot: 'plaza', round: 6, text: 'The Abomination crawls out of the sewers. Kill it!' },
+        { type: 'activate', spots: ['subway'], hold: 8, label: 'Override the gate', text: 'The gate jammed halfway. Override the controls at the subway entrance.' },
+        { type: 'survive', time: 45, horde: true, text: 'The override alarm is drawing in every zombie downtown. Survive!' },
+        { type: 'boss', zombie: 'brute', count: 2, spot: 'plaza', nextRound: true, text: 'Two more Brutes followed the alarm into the plaza. Put them down!' },
         { type: 'extract', spot: 'bunker', radius: 4, openDoors: [0], text: 'The gate is open. Get inside the subway bunker!' },
       ],
       outro: "The bunker's radio picks up a military frequency: Fort Ironside is still holding... barely.",
@@ -335,7 +339,6 @@ export const MAPS = [
       ground: '#d8b97a', ground2: '#e3c68a', path: '#b89660', water: '#4f9ac4', wall: '#a8a08a', roof: '#6b7a4a',
       dark: 0.0, tree: 'dead', particles: 'dust', floor: '#8a7a5a',
     },
-    difficulty: { hp: 1.3, speed: 1.1, damage: 1.2, density: 1.15, spawnRate: 1.2 },
     zombies: [
       { type: 'walker', weight: 9, minWave: 1 },
       { type: 'runner', weight: 3, minWave: 1 },
@@ -353,8 +356,11 @@ export const MAPS = [
         { type: 'collect', item: 'charge', label: 'Demolition Charge', count: 4, spots: 'charge', text: 'Recover 4 demolition charges from around the base.' },
         { type: 'activate', spots: ['pylonN', 'pylonS'], hold: 5, timeLimit: 40, label: 'Plant charges', text: 'Plant the charges on both bridge pylons within 40 seconds of each other.' },
         { type: 'boss', zombie: 'juggernaut', spot: 'hangar', nextRound: true, text: 'A Juggernaut in a blast suit is coming out of the hangar!' },
+        { type: 'activate', spots: ['hangar'], hold: 6, label: 'Pull the detonator codes', text: 'The detonator is locked. Pull the codes from the hangar terminal.' },
         { type: 'survive', time: 60, horde: true, text: 'The detonator is arming. Survive the horde for 60 seconds!' },
+        { type: 'souls', spot: 'yard', radius: 8, count: 20, text: "The General's guard is massing in the yard. Kill 20 zombies there." },
         { type: 'boss', zombie: 'general', spot: 'yard', text: 'The base commander has turned. Destroy the Iron General!' },
+        { type: 'defend', spot: 'apc', radius: 5, time: 30, horde: true, text: "The APC won't start. Hold it while the driver hotwires it!" },
         { type: 'extract', spot: 'apc', radius: 4, text: 'Cross the bridge and get to the APC!' },
       ],
       outro: 'The bridge erupts behind your APC. In the commander\'s logbook: "Whiteout Station — cure research — priority one."',
@@ -455,7 +461,6 @@ export const MAPS = [
       ground: '#e6eef5', ground2: '#d7e3ee', path: '#b9c8d6', water: '#9cc8e6', wall: '#8a9aaa', roof: '#4a6a8a',
       dark: 0.12, tree: 'pine', particles: 'snow', floor: '#7a828c',
     },
-    difficulty: { hp: 1.45, speed: 1.15, damage: 1.3, density: 1.2, spawnRate: 1.3 },
     zombies: [
       { type: 'walker', weight: 8, minWave: 1 },
       { type: 'runner', weight: 3, minWave: 1 },
@@ -472,9 +477,12 @@ export const MAPS = [
         'Whiteout Station was researching the infection before it went silent. Restore power, recover the tissue samples and run the analysis — if a cure exists, it starts here.',
       steps: [
         { type: 'activate', spots: ['generator'], hold: 6, label: 'Restart generator', text: 'Restart the station generator.' },
+        { type: 'activate', spots: ['dorm'], hold: 5, label: 'Search the dorms', text: "Search the dorms for the lead scientist's lab notes." },
         { type: 'collect', item: 'sample', label: 'Tissue Sample', count: 3, spots: 'sample', round: 3, text: 'The ice thaws by round 3. Recover 3 frozen tissue samples from the wilderness.' },
         { type: 'souls', spot: 'centrifuge', radius: 7, count: 20, text: 'The centrifuge runs on infected tissue. Kill 20 zombies near the lab.' },
+        { type: 'defend', spot: 'centrifuge', radius: 6, time: 45, horde: true, text: 'The analysis is running. Defend the lab!' },
         { type: 'boss', zombie: 'brute', count: 2, spot: 'dorm', nextRound: true, text: 'Twin Brutes are breaking into the station!' },
+        { type: 'activate', spots: ['hive'], hold: 5, label: 'Plant the sonic lure', text: 'Draw it out: plant the sonic lure at the hive under the ice.' },
         { type: 'boss', zombie: 'hivequeen', spot: 'hive', text: 'The analysis woke something under the ice. Kill the Hive Queen!' },
         { type: 'extract', spot: 'snowcat', radius: 4, text: 'Get to the snowcat in the garage!' },
       ],
@@ -575,7 +583,6 @@ export const MAPS = [
       ground: '#5c5866', ground2: '#66626f', path: '#47434f', water: '#5a3a7a', wall: '#7a7f8c', roof: '#3a3f4c',
       dark: 0.55, tree: 'none', particles: 'embers', floor: '#4a4652',
     },
-    difficulty: { hp: 1.6, speed: 1.2, damage: 1.4, density: 1.3, spawnRate: 1.4 },
     zombies: [
       { type: 'walker', weight: 7, minWave: 1 },
       { type: 'runner', weight: 3, minWave: 1 },
@@ -595,8 +602,11 @@ export const MAPS = [
       steps: [
         { type: 'activate', spots: ['reactorA', 'reactorB', 'reactorC'], hold: 5, timeLimit: 60, label: 'Shut down reactor', text: 'Shut down all 3 reactor cores within 60 seconds.' },
         { type: 'collect', item: 'vial', label: 'Antidote Vial', count: 3, spots: 'vial', round: 4, text: 'The vault unseals on round 4. Collect 3 antidote vials from the research wings.' },
+        { type: 'souls', spot: 'lab', radius: 7, count: 25, text: 'The synthesizer needs live tissue. Kill 25 zombies near the central lab.' },
         { type: 'defend', spot: 'lab', radius: 6, time: 60, horde: true, text: 'Synthesize the cure. Defend the central lab!' },
+        { type: 'activate', spots: ['east', 'lab'], hold: 5, timeLimit: 45, label: 'Upload the cure', text: 'Upload the cure formula at the east servers and the central lab within 45 seconds.' },
         { type: 'boss', zombie: 'juggernaut', spot: 'east', nextRound: true, text: 'Facility security has turned. Destroy the Juggernaut!' },
+        { type: 'survive', time: 60, horde: true, text: 'LOCKDOWN. Survive until the elevator power comes back!' },
         { type: 'boss', zombie: 'patientzero', spot: 'lab', text: 'PATIENT ZERO HAS AWAKENED. END THIS.' },
         { type: 'extract', spot: 'elevator', radius: 4, openDoors: [0], text: 'The elevator is open. Get out!' },
       ],
