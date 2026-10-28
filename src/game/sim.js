@@ -38,6 +38,10 @@ const BOSS_CD = {
 };
 const BOSS_WINDUP = { slam: 0.8, charge: 0.9, summon: 1.0, sweep: 0.75, hook: 0.55, bile: 0.7, devour: 1.0, barrage: 0.9, rally: 0.6, eggs: 0.8, mirror: 0.5, drain: 0.4 };
 
+const LOOT_REACH = 1.15, LOOT_REACH_GROUND = 1.9; // from a container's edge / from loot lying on the ground
+const KNIFE_DMG = 130; // knife hit at round 1, before damage bonuses
+const LEVEL_HP = 5; // max health gained per level up
+const TELEPORT_MIN = 5.5; // closest a teleporting zombie or boss lands to its target
 const dist2 = (ax, az, bx, bz) => (ax - bx) * (ax - bx) + (az - bz) * (az - bz);
 const angDiff = (a, b) => {
   let d = a - b;
@@ -132,12 +136,14 @@ export class Game {
     this.result = null;
     this.stepsDone = 0;
     this.totalKills = 0;
+    this.forgeJob = null; // gun in the forge: { pid, w, t } (t counts down; 0 = ready to collect)
     this.box = { spot: 0, state: 'idle', t: 0, user: -1, wid: '', rarity: 0, uses: 0, movesAt: 4 + Math.floor(this.rng() * 5) };
     if (this.world.spots.box.length) this.box.spot = Math.floor(this.rng() * this.world.spots.box.length);
     players.forEach((pp, i) => this.addPlayer(pp, i));
-    this.containers = this.world.spots.loot.map((s, i) => ({ id: i, x: s.x, z: s.z, kind: s.kind, full: true, prog: 0 }));
+    this.containers = this.world.spots.loot.map((s, i) => ({ id: i, x: s.x, z: s.z, box: s.box, kind: s.kind, full: true, prog: 0 }));
     this.story = mode === 'story' ? this.map.story : null;
     this.stepIdx = -1;
+    this.hordeT = 0;
     this.step = null;
     this.ss = null;
     if (this.story) this.startStep(0);
@@ -202,6 +208,8 @@ export class Game {
       lastHurt: -10,
       invuln: 0,
       tp: 1,
+      burnT: 0,
+      burnDps: 0,
       prompt: '',
       promptProg: -1,
       input: { mx: 0, mz: 0, ax: sp.x, az: sp.z - 5, fire: false, sprint: false, use: false },
@@ -229,10 +237,16 @@ export class Game {
     }
   }
 
+  // guns in this map's pool that can come in `rarity` (some only exist at Rare / Epic and up)
+  gunsFor(rarity) {
+    return this.weaponPool.filter((w) => (WEAPONS[w].minRarity || 0) <= rarity);
+  }
+
   makeWeapon(id, forged = 0, rarity = 0) {
     forged = +forged || 0; // forge level 0 / 1 / 2 (booleans accepted); indexes the forge tables
+    rarity = Math.max(rarity, WEAPONS[id].minRarity || 0);
     const st = weaponStats(id, forged, rarity);
-    return { id, forged, rarity, mag: st.mag, reserve: st.reserve, forging: 0 };
+    return { id, forged, rarity, mag: st.mag, reserve: st.reserve };
   }
 
   // weapon stats for a specific player (rarity + forge + level-up bonuses)
@@ -266,6 +280,10 @@ export class Game {
     while (p.xp >= xpForLevel(p.rank)) {
       p.xp -= xpForLevel(p.rank);
       p.rank++;
+      // every level makes you a little tougher
+      p.baseMaxHp += LEVEL_HP;
+      p.maxHp += LEVEL_HP;
+      p.hp += LEVEL_HP;
       this.emit({ k: 'levelup', p: p.id, r: p.rank, x: p.x, z: p.z });
     }
   }
@@ -313,6 +331,7 @@ export class Game {
     this.updateStrikes(dt);
     this.updatePickups(dt);
     this.updateBox(dt);
+    this.updateForge(dt);
     if (this.story) this.updateStory(dt);
     if (this.players.length && !this.players.some((p) => p.state === 'alive' || p.selfRevive)) {
       this.result = 'lose';
@@ -344,6 +363,14 @@ export class Game {
       }
       return;
     }
+    if (p.burnT > 0) {
+      p.burnT -= dt;
+      if (p.invuln <= 0) {
+        p.hp -= p.burnDps * dt;
+        p.lastHurt = this.time;
+        if (p.hp <= 0) this.hurtPlayer(p, 1);
+      }
+    }
     if (input.px !== undefined) {
       // after a server-side move (respawn, hook) ignore positions predicted before the client saw it
       if (Number.isFinite(input.px) && Number.isFinite(input.pz) && (input.tp === undefined || input.tp === p.tp)) {
@@ -367,18 +394,6 @@ export class Game {
     if (this.time - p.lastHurt > 3.5 - mend * 1.2 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 30 * (1 + 0.5 * mend) * dt);
     const shieldMax = 25 * (p.boons.aegis || 0);
     if (p.shield < shieldMax && this.time - p.lastHurt > 5) p.shield = Math.min(shieldMax, p.shield + 20 * dt);
-    for (const w of p.weapons) if (w && w.forging > 0) {
-      w.forging -= dt;
-      if (w.forging <= 0) {
-        w.forging = 0;
-        w.forged = (w.forged || 0) + 1;
-        w.fkills = 0;
-        const st = this.wstat(p, w);
-        w.mag = st.mag;
-        w.reserve = st.reserve;
-        this.emit({ k: 'sfx', s: 'forge', x: p.x, z: p.z });
-      }
-    }
 
     const w = this.curWeapon(p);
     const ws = this.wstat(p, w);
@@ -406,7 +421,7 @@ export class Game {
     this.updateInteract(p, acts.usePress, input.use, dt);
 
     const cw = this.curWeapon(p);
-    if (input.fire && p.fireCd <= 0 && p.reloadT <= 0 && !cw.forging) {
+    if (input.fire && p.fireCd <= 0 && p.reloadT <= 0) {
       if (cw.mag > 0) {
         this.fireWeapon(p, cw);
       } else if (cw.reserve > 0) {
@@ -425,7 +440,7 @@ export class Game {
   startReload(p) {
     const w = this.curWeapon(p);
     const ws = this.wstat(p, w);
-    if (p.reloadT > 0 || w.mag >= ws.mag || w.reserve <= 0 || w.forging) return;
+    if (p.reloadT > 0 || w.mag >= ws.mag || w.reserve <= 0) return;
     let t = ws.reload;
     if (p.perks.quick) t *= 0.5;
     if (p.char === 'sparks') t *= 0.85;
@@ -623,11 +638,17 @@ export class Game {
     if (p) {
       p.kills++;
       const cw = this.curWeapon(p);
-      if (cw.forged === 1 && !cw.forging && GUN_KILLS.has(kind)) cw.fkills = (cw.fkills || 0) + 1;
+      if (cw.forged === 1 && GUN_KILLS.has(kind)) cw.fkills = (cw.fkills || 0) + 1;
       this.givePoints(p, kind === 'melee' ? 130 : z.def.points);
       if (p.boons.vamp && p.state === 'alive') p.hp = Math.min(p.maxHp, p.hp + 3 * p.boons.vamp);
     }
     this.emit({ k: 'die', id: z.id, x: z.x, z: z.z, ty: ZTYPES.indexOf(z.type), a: z.ang });
+    // soul steps: kills near the collector feed it
+    const ss = this.ss;
+    if (this.step && this.step.type === 'souls' && !ss.waiting && ss.got < ss.need && dist2(z.x, z.z, ss.zone.x, ss.zone.z) < ss.zone.r * ss.zone.r) {
+      ss.got++;
+      this.emit({ k: 'soul', x: z.x, z: z.z, x2: ss.zone.x, z2: ss.zone.z });
+    }
     if (kind === 'devour') return;
     // XP: killer gets full, teammates a share (bosses: everyone gets full)
     const xp = Math.round(z.def.points / 5);
@@ -662,7 +683,7 @@ export class Game {
       if (hits >= 2) break;
       hits++;
       const zx = z.x, zz = z.z;
-      this.damageZombie(z, 150 * this.damageMult(p) * (1 + 0.05 * (this.wave - 1)), p.id, 'melee');
+      this.damageZombie(z, KNIFE_DMG * this.damageMult(p) * (1 + 0.05 * (this.wave - 1)), p.id, 'melee');
       this.emit({ k: 'h', x: zx, z: zz });
     }
   }
@@ -1009,11 +1030,12 @@ export class Game {
         bestPick = k;
       }
     }
-    // loot containers (whichever of container / dropped weapon is closer gets the prompt)
-    let bc = null, bcd = 1.9 * 1.9;
+    // loot containers (whichever of container / dropped weapon is closer gets the prompt): reachable
+    // from any side of the container, as long as no wall is in the way
+    let bc = null, bcd = Infinity;
     for (const c of this.containers) {
       if (!c.full) continue;
-      const d = dist2(p.x, p.z, c.x, c.z);
+      const d = this.lootReach(p, c);
       if (d < bcd) {
         bcd = d;
         bc = c;
@@ -1050,7 +1072,26 @@ export class Game {
     // forge
     const fs = this.world.spots.forge;
     if (fs && near(fs.x, fs.z, 2.3)) {
-      if (cw.forging) return { text: 'Forging...' };
+      const job = this.forgeJob;
+      if (job && !this.players.some((q) => q.id === job.pid)) this.forgeJob = null; // owner left the game
+      else if (job && job.pid !== p.id) return { text: 'Weapon Forge is busy' };
+      else if (job && job.t > 0) return { text: `Forging ${this.wstat(p, job.w).name}... ${Math.ceil(job.t)}s` };
+      else if (job) {
+        const free = p.weapons.indexOf(null);
+        const old = free < 0 ? this.curWeapon(p) : null;
+        return {
+          text: `[E] Take ${this.wstat(p, job.w).name}` + (old ? ` (swaps out your ${WEAPONS[old.id].name})` : ''),
+          act: () => {
+            const slot = free < 0 ? p.cur : free;
+            p.weapons[slot] = job.w;
+            p.cur = slot;
+            p.reloadT = 0;
+            p.fireCd = 0.35;
+            this.forgeJob = null;
+            this.emit({ k: 'sfx', s: 'swap', x: p.x, z: p.z, p: p.id });
+          },
+        };
+      }
       if (cw.forged >= 2) return { text: 'Weapon fully forged' };
       if (cw.forged && (cw.fkills || 0) < FORGE2.kills) return { text: `Forge XX unlocks after ${FORGE2.kills} kills with this gun (${cw.fkills || 0}/${FORGE2.kills})` };
       const cost = cw.forged ? FORGE2.cost : FORGE.cost;
@@ -1058,8 +1099,19 @@ export class Game {
         cost,
         text: `[E] Weapon Forge: upgrade ${WEAPONS[cw.id].name} to ${cw.forged ? 'XX' : 'X'} — ${cost}`,
         act: () => {
-          cw.forging = 2.5;
+          // the gun goes into the forge; keep the other one in hand (or a loaner pistol)
+          const i = p.weapons.indexOf(cw);
+          p.weapons[i] = null;
+          if (i === 0) [p.weapons[0], p.weapons[1]] = [p.weapons[1], null];
+          if (!p.weapons[0]) p.weapons[0] = this.makeWeapon('pistol');
+          p.cur = 0;
           p.reloadT = 0;
+          cw.forged = (cw.forged || 0) + 1;
+          cw.fkills = 0;
+          const st = this.wstat(p, cw);
+          cw.mag = st.mag;
+          cw.reserve = st.reserve;
+          this.forgeJob = { pid: p.id, w: cw, t: FORGE.time };
           this.emit({ k: 'sfx', s: 'forgestart', x: fs.x, z: fs.z });
         },
       };
@@ -1202,6 +1254,7 @@ export class Game {
       p.perks = {};
       p.maxHp = p.baseMaxHp;
       p.reloadT = 0;
+      p.burnT = 0;
       const others = this.players.some((q) => q !== p && q.state === 'alive');
       if (p.boons.laststand) {
         // consumed: the upgrade can be picked again later
@@ -1255,10 +1308,10 @@ export class Game {
         return;
       }
       const u = this.players.find((q) => q.id === b.user);
-      const pool = this.weaponPool.filter((w) => !(u && u.weapons.some((x) => x && x.id === w)));
-      const pick = this.rng.weighted(pool.length ? pool : this.weaponPool, (w) => WEAPONS[w].boxWeight || 1);
-      b.wid = pick;
+      // rarity first: guns with a minimum rarity only turn up on rolls that high
       b.rarity = rollRarity(this.rng, 1 + this.wave * 0.06, 1);
+      const pool = this.weaponPool.filter((w) => (WEAPONS[w].minRarity || 0) <= b.rarity && !(u && u.weapons.some((x) => x && x.id === w)));
+      b.wid = this.rng.weighted(pool.length ? pool : this.gunsFor(b.rarity), (w) => WEAPONS[w].boxWeight || 1);
       b.state = 'offer';
       b.t = 10;
     } else if (b.state === 'offer') {
@@ -1272,6 +1325,33 @@ export class Game {
       b.uses = 0;
       b.movesAt = 4 + Math.floor(this.rng() * 5);
     }
+  }
+
+  // squared distance from a player to the nearest searchable point of a container, or Infinity
+  // when it is out of reach or behind a wall
+  lootReach(p, c) {
+    if (!c.box) {
+      const d = dist2(p.x, p.z, c.x, c.z);
+      return d < LOOT_REACH_GROUND * LOOT_REACH_GROUND ? d : Infinity;
+    }
+    const [x0, z0, x1, z1] = c.box;
+    const cx = Math.max(x0, Math.min(x1, p.x)), cz = Math.max(z0, Math.min(z1, p.z));
+    const d = dist2(p.x, p.z, cx, cz);
+    if (d >= LOOT_REACH * LOOT_REACH) return Infinity;
+    // aim just outside the container's edge, toward the player, so its own cells don't count as a wall
+    const k = 0.05 / (Math.sqrt(d) || 1);
+    return hasLOS(this.world, p.x, p.z, cx + (p.x - cx) * k, cz + (p.z - cz) * k) ? d : Infinity;
+  }
+
+  updateForge(dt) {
+    const job = this.forgeJob;
+    if (!job || job.t <= 0) return;
+    job.t -= dt;
+    if (job.t > 0) return;
+    job.t = 0;
+    const fs = this.world.spots.forge;
+    this.emit({ k: 'sfx', s: 'forge', x: fs.x, z: fs.z });
+    this.emit({ k: 'note', p: job.pid, s: 'Your gun is ready at the Weapon Forge' });
   }
 
   openContainer(c, p) {
@@ -1295,8 +1375,8 @@ export class Game {
     const base = { id: this.nextId++, x, z, fx: c.x, fz: c.z };
     let rarity = -1;
     if (roll === 'weapon') {
-      const wid = this.rng.weighted(this.weaponPool, (w) => (WEAPONS[w].map === this.map.id ? 3 : 1));
       rarity = rollRarity(this.rng, def.luck + this.wave * 0.06, def.minRarity || 0);
+      const wid = this.rng.weighted(this.gunsFor(rarity), (w) => (WEAPONS[w].map === this.map.id ? 3 : 1));
       this.pickups.push({ ...base, kind: 'weapon', wid, rarity, t: 150 });
     } else if (roll === 'cash') {
       this.pickups.push({ ...base, kind: 'cash', amount: 100 + Math.floor(this.rng() * 5) * 50, t: 60 });
@@ -1377,14 +1457,21 @@ export class Game {
 
   // ------------------------------------------------------------ waves
   updateWaves(dt) {
+    // horde steps keep zombies coming, between rounds too, until the step is done
+    if (this.step && this.step.horde && !this.ss.waiting && this.wave > 0) {
+      this.hordeT -= dt;
+      if (this.hordeT <= 0 && this.zombies.filter((z) => !z.boss && !z.mini).length < this.maxAlive) {
+        this.hordeT = this.spawnInterval * 1.4;
+        this.spawnRegular();
+      }
+    }
     if (this.waveState === 'break') {
       this.waveT -= dt;
       if (this.waveT <= 0) this.startWave();
       return;
     }
-    const pressure = this.step && ['survive', 'defend', 'boss'].includes(this.step.type);
     if (this.toSpawn > 0) {
-      this.spawnT -= dt * (pressure ? 1.35 : 1);
+      this.spawnT -= dt;
       const regular = this.zombies.filter((z) => !z.boss && !z.mini).length;
       if (this.spawnT <= 0 && regular < this.maxAlive) {
         this.spawnT = this.spawnInterval * (0.7 + this.rng() * 0.6);
@@ -1392,7 +1479,7 @@ export class Game {
       }
     } else if (!this.zombies.some((z) => !z.boss && !z.mini)) {
       this.waveState = 'break';
-      this.waveT = pressure ? 4 : 10;
+      this.waveT = 10;
       this.emit({ k: 'waveEnd', w: this.wave });
     }
   }
@@ -1589,6 +1676,10 @@ export class Game {
         if (z.t <= 0) {
           z.state = 'move';
           if (dist < reach + (big ? 0.5 : 0.8) && !wall) {
+            if (z.def.ignite && tgt.invuln <= 0) {
+              tgt.burnT = z.def.ignite.time;
+              tgt.burnDps = z.def.ignite.dps * this.diff.damage;
+            }
             this.hurtPlayer(tgt, z.damage);
             if (tgt.boons.thorns) this.damageZombie(z, 60 * tgt.boons.thorns * (1 + 0.15 * (this.wave - 1)), tgt.id, 'spikes');
           }
@@ -1760,10 +1851,11 @@ export class Game {
       z.ang = Math.atan2(tgt.z - z.z, tgt.x - z.x);
       return true;
     }
-    if (def.phase && dist > 5 && dist < 26) {
+    // teleporters land a fair way off (TELEPORT_MIN..), never right on top of a player
+    if (def.phase && dist > TELEPORT_MIN + 3 && dist < 26) {
       z.specialCd = def.phase.cooldown + this.rng() * 2;
       const a = this.rng() * Math.PI * 2;
-      const r = 2.5 + this.rng() * 2;
+      const r = TELEPORT_MIN + this.rng() * 2;
       const nx = tgt.x + Math.cos(a) * r, nz = tgt.z + Math.sin(a) * r;
       if (!circleBlocked(this.world, this.sgrid, nx, nz, z.cr) && hasLOS(this.world, tgt.x, tgt.z, nx, nz) && !this.structBetween(tgt.x, tgt.z, nx, nz)) {
         this.emit({ k: 'blink', x: z.x, z: z.z, x2: nx, z2: nz });
@@ -1936,9 +2028,9 @@ export class Game {
         // blink next to the target and leave decoys that look exactly like the real thing
         const spots = [];
         for (let tries = 0; tries < 24 && spots.length < 3; tries++) {
-          const a = this.rng() * Math.PI * 2, r = 5 + this.rng() * 3;
+          const a = this.rng() * Math.PI * 2, r = TELEPORT_MIN + 1 + this.rng() * 3;
           const nx = tgt.x + Math.cos(a) * r, nz = tgt.z + Math.sin(a) * r;
-          if (!circleBlocked(this.world, this.sgrid, nx, nz, z.cr) && spots.every((q) => dist2(q.x, q.z, nx, nz) > 9)) spots.push({ x: nx, z: nz });
+          if (!circleBlocked(this.world, this.sgrid, nx, nz, z.cr) && !this.structBetween(tgt.x, tgt.z, nx, nz) && spots.every((q) => dist2(q.x, q.z, nx, nz) > 9)) spots.push({ x: nx, z: nz });
         }
         if (spots.length) {
           const me = spots[Math.floor(this.rng() * spots.length)];
@@ -1959,9 +2051,9 @@ export class Game {
         z.drainTgt = tgt;
       } else if (ab === 'teleport') {
         for (let tries = 0; tries < 12; tries++) {
-          const a = this.rng() * Math.PI * 2, r = 4 + this.rng() * 4;
+          const a = this.rng() * Math.PI * 2, r = TELEPORT_MIN + 1 + this.rng() * 3;
           const nx = tgt.x + Math.cos(a) * r, nz = tgt.z + Math.sin(a) * r;
-          if (!circleBlocked(this.world, this.sgrid, nx, nz, z.cr)) {
+          if (!circleBlocked(this.world, this.sgrid, nx, nz, z.cr) && !this.structBetween(tgt.x, tgt.z, nx, nz)) {
             this.emit({ k: 'blink', x: z.x, z: z.z, x2: nx, z2: nz, big: 1 });
             z.x = nx;
             z.z = nz;
@@ -2226,10 +2318,28 @@ export class Game {
   }
 
   // ------------------------------------------------------------ story
+  // Story steps run alongside the rounds instead of driving them (like COD's Easter-egg
+  // quests): rounds come and go on their own, and a step can
+  //   round: N      wait until round N before it starts (its items only appear then)
+  //   nextRound     start when the next round begins (bosses tear out at a round start)
+  //   horde         keep zombies spawning until it is done
+  //   timeLimit     (activate) finish every station within this many seconds of the first
+  // and 'souls' steps need kills near a collector.
   startStep(i) {
     const step = this.story.steps[i];
     this.stepIdx = i;
     this.step = step;
+    const waitRound = Math.max(step.round || 0, step.nextRound ? this.wave + 1 : 0);
+    if (this.wave < waitRound) {
+      this.ss = { t: 0, waiting: true, waitRound };
+      this.emit({ k: 'obj', s: step.text, i });
+      return;
+    }
+    this.beginStep();
+  }
+
+  beginStep() {
+    const step = this.step;
     const ss = (this.ss = { t: 0 });
     const named = this.world.spots.named;
     const at = (name) => (named[name] && named[name][0]) || this.world.spots.playerSpawn[0];
@@ -2243,6 +2353,10 @@ export class Game {
       }
     } else if (step.type === 'activate') {
       ss.stations = step.spots.map((n) => ({ name: n, x: at(n).x, z: at(n).z, prog: 0, done: false }));
+    } else if (step.type === 'souls') {
+      ss.got = 0;
+      ss.need = step.count;
+      ss.zone = { ...at(step.spot), r: step.radius };
     } else if (step.type === 'survive') {
       ss.left = step.time;
     } else if (step.type === 'defend') {
@@ -2260,7 +2374,7 @@ export class Game {
       ss.zone = { ...at(step.spot), r: step.radius };
       ss.hold = 0;
     }
-    this.emit({ k: 'obj', s: step.text, i });
+    this.emit({ k: 'obj', s: step.text, i: this.stepIdx });
   }
 
   completeStep() {
@@ -2272,9 +2386,6 @@ export class Game {
       this.emit({ k: 'end', r: 'win' });
       return;
     }
-    // every finished task pushes the next round, so the story can't be cheesed by
-    // keeping one zombie alive in round 1
-    this.startWave();
     this.startStep(this.stepIdx + 1);
   }
 
@@ -2288,6 +2399,10 @@ export class Game {
   updateStory(dt) {
     const step = this.step, ss = this.ss;
     if (!step) return;
+    if (ss.waiting) {
+      if (this.wave >= ss.waitRound) this.beginStep();
+      return;
+    }
     ss.t += dt;
     switch (step.type) {
       case 'collect':
@@ -2302,6 +2417,22 @@ export class Game {
           }
         }
         if (ss.stations.every((s) => s.done)) this.completeStep();
+        else if (step.timeLimit) {
+          // the clock starts with the first station; run out and the whole sequence resets
+          if (ss.left === undefined && ss.stations.some((s) => s.done)) ss.left = step.timeLimit;
+          if (ss.left !== undefined && (ss.left -= dt) <= 0) {
+            ss.left = undefined;
+            for (const st of ss.stations) {
+              st.done = false;
+              st.prog = 0;
+            }
+            this.emit({ k: 'note', p: -1, s: 'Too slow! ' + step.label + ' reset' });
+            this.emit({ k: 'sfx', s: 'nope', x: 0, z: 0 });
+          }
+        }
+        break;
+      case 'souls':
+        if (ss.got >= ss.need) this.completeStep();
         break;
       case 'survive':
         ss.left -= dt;
@@ -2344,12 +2475,17 @@ export class Game {
     }
     const step = this.step, ss = this.ss;
     const o = { text: step.text, prog: '', mk: [], zone: null, i: this.stepIdx, n: this.story.steps.length };
-    if (step.type === 'collect') {
+    if (ss.waiting) {
+      o.prog = ss.waitRound === this.wave + 1 ? 'Begins when the next round starts' : 'Begins on round ' + ss.waitRound;
+    } else if (step.type === 'collect') {
       o.prog = ss.got + ' / ' + ss.need;
       for (const k of this.pickups) if (k.kind === 'item') o.mk.push([k.x, k.z, 0]);
     } else if (step.type === 'activate') {
-      o.prog = ss.stations.filter((s) => s.done).length + ' / ' + ss.stations.length;
+      o.prog = ss.stations.filter((s) => s.done).length + ' / ' + ss.stations.length + (ss.left !== undefined ? ' — ' + Math.ceil(ss.left) + 's left' : '');
       for (const s of ss.stations) if (!s.done) o.mk.push([s.x, s.z, 1, Math.round(s.prog * 100) / 100]);
+    } else if (step.type === 'souls') {
+      o.prog = ss.got + ' / ' + ss.need + ' souls';
+      o.zone = [ss.zone.x, ss.zone.z, ss.zone.r];
     } else if (step.type === 'survive') {
       o.prog = Math.ceil(ss.left) + 's';
     } else if (step.type === 'defend') {
@@ -2378,12 +2514,12 @@ export class Game {
       left: this.toSpawn + this.zombies.filter((z) => !z.boss && !z.mini).length,
       P: this.players.map((p) => ({
         id: p.id, n: p.name, c: p.char, l: p.lvl, x: r2(p.x), z: r2(p.z), a: r2(p.ang), hp: Math.ceil(p.hp), mh: p.maxHp,
-        s: STATE_CODE[p.state], w: p.weapons.map((w) => (w ? [w.id, w.forged || 0, w.mag, w.reserve, w.forging > 0 ? 1 : 0, w.rarity || 0, this.wstat(p, w).mag, w.fkills || 0] : null)), cw: p.cur,
+        s: STATE_CODE[p.state], w: p.weapons.map((w) => (w ? [w.id, w.forged || 0, w.mag, w.reserve, w.rarity || 0, this.wstat(p, w).mag, w.fkills || 0] : null)), cw: p.cur,
         xp: p.xp, xpn: xpForLevel(p.rank), rk: p.rank, chs: p.choices[0] || null, nch: p.choices.length, bo: p.boons,
         pts: p.points, k: p.kills, cd: r2(p.abilityCd), cdm: p.abilityMax || 1, ch: p.charges, chm: p.maxCharges, g: p.grenades,
         pk: Object.keys(p.perks), rl: p.reloadT > 0 ? r2(1 - p.reloadT / p.reloadMax) : -1, pr: p.prompt, pp: r2(p.promptProg),
         bl: r2(p.bleed), rv: r2(p.revive), st: r2(p.stamina), iv: p.invuln > 0 ? 1 : 0, mv: p.moving ? 1 : 0, sp: p.sprinting ? 1 : 0,
-        tp: p.tp, er: p.earned, dn: p.downs, rvs: p.revives, sh: Math.ceil(p.shield),
+        tp: p.tp, er: p.earned, dn: p.downs, rvs: p.revives, sh: Math.ceil(p.shield), bn: p.burnT > 0 ? 1 : 0,
       })),
       Z: this.zombies.map((z) => [
         z.id, ZTYPES.indexOf(z.type), r2(z.x), r2(z.z), r2(z.ang), r2(z.hp / z.maxHp),
@@ -2398,6 +2534,8 @@ export class Game {
       C: this.containers.map((c) => [c.full ? 1 : 0, r2(c.prog)]),
       D: this.world.doors.filter((d) => d.open).map((d) => d.id),
       B: [this.box.spot, this.box.state, this.box.wid, r2(this.box.t), this.box.user, this.box.rarity],
+      // gun in the forge: [weapon id, forge level it comes out at, rarity, progress 0-1, owner id]
+      F: this.forgeJob && [this.forgeJob.w.id, this.forgeJob.w.forged, this.forgeJob.w.rarity, r2(1 - this.forgeJob.t / FORGE.time), this.forgeJob.pid],
       H: this.hazards.map((h) => [h.id, h.kind, r2(h.x), r2(h.z), r2(h.r), r2(h.t)]),
       O: this.objectiveView(),
       PW: [r2(Math.max(0, this.instakill)), r2(Math.max(0, this.double))],

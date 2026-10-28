@@ -20,7 +20,7 @@ export const CHARACTERS = {
       return {
         wallHp: [500, 800, 950, 1300, 2000][lvl - 1],
         charges: [2, 3, 3, 4, 4][lvl - 1],
-        cooldown: [14, 12, 11, 9, 8][lvl - 1],
+        cooldown: [28, 24.5, 22, 18.5, 16][lvl - 1],
         spikes: [0, 0, 25, 40, 70][lvl - 1],
         length: lvl >= 5 ? 5 : 3,
         maxWalls: [3, 4, 4, 4, 5][lvl - 1],
@@ -46,7 +46,7 @@ export const CHARACTERS = {
         duration: [18, 20, 22, 25, 28][lvl - 1],
         maxTurrets: [1, 1, 2, 2, 2][lvl - 1],
         hp: [250, 300, 320, 400, 450][lvl - 1],
-        cooldown: [26, 25, 24, 22, 21][lvl - 1],
+        cooldown: [36, 34, 33, 30.5, 29][lvl - 1],
         explosive: lvl >= 5,
         range: 13,
       };
@@ -73,7 +73,7 @@ export const CHARACTERS = {
         zoneDamage: [0, 0, 0, 18, 25][lvl - 1],
         revive: lvl >= 3,
         invuln: lvl >= 5 ? 1.5 : 0,
-        cooldown: [28, 27, 26, 24, 23][lvl - 1],
+        cooldown: [38.5, 37, 36, 33, 32][lvl - 1],
       };
     },
   },
@@ -95,7 +95,7 @@ export const CHARACTERS = {
         damage: [180, 215, 225, 240, 260][lvl - 1],
         radius: [3, 3, 3.3, 3.3, 3.5][lvl - 1],
         spread: [3, 3, 3.3, 3.6, 4.2][lvl - 1],
-        cooldown: [36, 35, 34, 30, 29][lvl - 1],
+        cooldown: [50, 48, 47, 41.5, 40][lvl - 1],
         napalm: lvl >= 5,
       };
     },
@@ -117,7 +117,7 @@ export const CHARACTERS = {
         damage: [150, 180, 190, 200, 210][lvl - 1],
         chains: [4, 4, 6, 7, 8][lvl - 1],
         stun: [0.8, 0.9, 1.3, 1.3, 1.5][lvl - 1],
-        cooldown: [16, 15.5, 15, 13, 12.5][lvl - 1],
+        cooldown: [22, 21.5, 20.5, 18, 17.5][lvl - 1],
         double: lvl >= 5,
       };
     },
@@ -141,7 +141,7 @@ export const CHARACTERS = {
         life: [20, 25, 25, 30, 35][lvl - 1],
         grenades: lvl >= 3 ? 1 : 0,
         mags: lvl >= 5,
-        cooldown: [30, 28, 27, 24, 22][lvl - 1],
+        cooldown: [52, 48, 46.5, 41, 38][lvl - 1],
       };
     },
   },

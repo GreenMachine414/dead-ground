@@ -332,19 +332,19 @@ export class Hud {
     // weapon
     const w = me.w[me.cw] || me.w[0];
     if (w) {
-      const r = RARITY[w[5] || 0];
-      const ws = weaponStats(w[0], w[1], w[5] || 0);
+      const r = RARITY[w[4] || 0];
+      const ws = weaponStats(w[0], w[1], w[4] || 0);
       this.set('wicon', el.wIcon, gunIconURL(w[0], w[1]), 'src');
       this.set('wr', el.wRarity, (w[1] ? 'Forged · ' : '') + r.name);
       el.wRarity.style.color = w[1] === 2 ? '#ff8a80' : w[1] ? '#d6a8ff' : r.color;
-      this.set('wn', el.wName, ws.name + (w[4] ? ' (forging...)' : w[1] === 1 ? ` · XX ${Math.min(w[7], FORGE2.kills)}/${FORGE2.kills}` : ''));
+      this.set('wn', el.wName, ws.name + (w[1] === 1 ? ` · XX ${Math.min(w[6], FORGE2.kills)}/${FORGE2.kills}` : ''));
       this.set('mag', el.mag, String(w[2]));
       this.set('res', el.res, ' / ' + w[3]);
       el.mag.classList.toggle('empty', w[2] === 0);
-      el.mag.classList.toggle('low', w[2] > 0 && w[2] <= Math.ceil((w[6] || ws.mag) * 0.25));
+      el.mag.classList.toggle('low', w[2] > 0 && w[2] <= Math.ceil((w[5] || ws.mag) * 0.25));
     }
     const alt = me.w[1 - me.cw];
-    this.set('alt', el.wAlt, alt ? `[${this.keys.swap}] ${RARITY[alt[5] || 0].name} ${WEAPONS[alt[0]].name}` : '');
+    this.set('alt', el.wAlt, alt ? `[${this.keys.swap}] ${RARITY[alt[4] || 0].name} ${WEAPONS[alt[0]].name}` : '');
     el.reload.style.display = me.rl >= 0 ? 'block' : 'none';
     if (me.rl >= 0) this.bar('rl', el.reloadFill, me.rl, dt);
     else this.bars.rl = null;
@@ -365,8 +365,8 @@ export class Hud {
         this.luKey = key;
         el.luCards.innerHTML = me.chs.map((id, i) => {
           const b = BOONS[id];
-          const lvl = b.max > 1 ? `<div class="lu-lvl">Level ${have(id) + 1} of ${b.max}</div>` : '';
-          return `<div class="lu-card" data-pick="${i + 1}" style="--c:${b.color}"><div class="lu-key">${i + 1}</div><div class="lu-icon">${b.icon}</div><div class="lu-name">${b.name}</div>${lvl}<div class="lu-desc">${b.desc}</div></div>`;
+          const lvl = b.max > 1 ? ` <span>· level ${have(id) + 1} of ${b.max}</span>` : '';
+          return `<div class="lu-card" data-pick="${i + 1}" style="--c:${b.color}"><div class="lu-key">${i + 1}</div><div class="lu-name">${b.icon} ${b.name}${lvl}</div><div class="lu-desc">${b.desc}</div></div>`;
         }).join('');
       }
     }

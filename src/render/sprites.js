@@ -500,26 +500,37 @@ export function drawEgg(ctx, x, y, u, t, seed, hurt) {
   ctx.fill();
 }
 
+const HARVESTER_SKIN = hex(ZOMBIES.harvester.color);
+
 // boss extras drawn on top of the base body
-export function drawZombieExtras(ctx, type, x, y, u, t, aim) {
+export function drawZombieExtras(ctx, type, x, y, u, t, aim, attack) {
   const lw = u * 0.06;
   if (type === 'harvester') {
-    // scythe
+    // scythe gripped in the right hand: the hand sits where drawPerson puts it (same shoulder,
+    // reach and wobble), the shaft leans toward the facing side and the blade flips with it
+    const reach = u * (attack ? 0.62 : 0.48), wob = Math.sin(t * 6 + 1) * 0.12;
+    const hx = x + u * 0.24 + Math.cos(aim + wob) * reach;
+    const hy = y - u * 0.66 + Math.sin(aim + wob) * reach * 0.8;
+    const side = Math.cos(aim) < 0 ? -1 : 1;
     ctx.save();
-    ctx.translate(x + u * 0.5, y - u * 1.0);
-    ctx.rotate(Math.sin(t * 2) * 0.2 + 0.3);
+    ctx.translate(hx, hy);
+    ctx.scale(side, 1);
+    ctx.rotate(0.25 + Math.sin(t * 2) * 0.08);
     ctx.strokeStyle = '#6b4a2a';
     ctx.lineWidth = u * 0.1;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(0, u * 0.7);
-    ctx.lineTo(0, -u * 0.9);
+    ctx.moveTo(0, u * 0.55);
+    ctx.lineTo(0, -u * 1.1);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(0, -u * 0.9);
-    ctx.quadraticCurveTo(u * 0.7, -u * 1.0, u * 0.9, -u * 0.4);
-    ctx.quadraticCurveTo(u * 0.5, -u * 0.7, 0, -u * 0.7);
+    ctx.moveTo(0, -u * 1.1);
+    ctx.quadraticCurveTo(u * 0.7, -u * 1.2, u * 0.9, -u * 0.6);
+    ctx.quadraticCurveTo(u * 0.5, -u * 0.9, 0, -u * 0.9);
     fillStroke(ctx, '#cfd4d8', OUT, lw * 0.5);
+    // fist closed around the shaft
+    circle(ctx, 0, 0, u * 0.11);
+    fillStroke(ctx, HARVESTER_SKIN, OUT, lw * 0.6);
     ctx.restore();
   } else if (type === 'spitter') {
     for (const [dx, dy] of [[-0.15, -1.3], [0.12, -1.35], [0.02, -1.45]]) {

@@ -921,13 +921,6 @@ select {
 #game canvas {
   display: block;
 }
-.light-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
 /* soft vignette over the game view; a static layer costs nothing per frame */
 #game::after {
   content: '';
@@ -1431,110 +1424,85 @@ select {
   font-size: 10px;
   margin-left: 1px;
 }
-/* upgrade machine picks: three large cards in the middle of the screen, plain body font */
+/* upgrade machine picks: one compact list in the middle of the screen, drawn above the rest of
+   the HUD, in the plain body font (no HUD text shadow) */
 #hud .levelup {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  z-index: 5;
+  box-sizing: border-box;
+  width: min(460px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   display: none;
   flex-direction: column;
-  align-items: center;
-  gap: 14px;
+  gap: 8px;
+  padding: 14px;
+  background: var(--parch);
+  color: var(--ink);
+  border: 3px solid var(--edge);
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
   font-family: var(--font);
+  font-weight: 400;
+  font-style: normal;
+  text-shadow: none;
+  pointer-events: auto;
 }
 #hud .levelup.show {
   display: flex;
-  animation: lu-in 0.2s ease-out;
-}
-@keyframes lu-in {
-  from {
-    opacity: 0;
-  }
 }
 .lu-title {
-  font-size: 19px;
-  font-weight: 600;
-  color: var(--gold);
-  background: rgba(36, 23, 15, 0.88);
-  padding: 6px 20px;
-  border-radius: 12px;
+  font-size: 16px;
+  text-align: center;
 }
 .lu-title span {
-  color: var(--parch);
+  color: #7a6450;
 }
 .lu-cards {
   display: flex;
-  gap: 22px;
-  pointer-events: auto;
+  flex-direction: column;
+  gap: 8px;
 }
 .lu-card {
-  position: relative;
-  box-sizing: border-box;
-  width: 270px;
-  min-height: 250px;
-  padding: 24px 22px 22px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 2px 12px;
   align-items: center;
-  gap: 10px;
-  background: linear-gradient(var(--parch), var(--parch2));
-  color: var(--ink);
-  border: 3px solid var(--edge);
-  border-top: 10px solid var(--c);
-  border-radius: 16px;
-  box-shadow: 0 6px 0 var(--edge), 0 12px 28px rgba(0, 0, 0, 0.35);
+  padding: 10px 12px;
+  background: var(--cream);
+  border: 2px solid var(--edge);
+  border-left: 8px solid var(--c);
+  border-radius: 10px;
   cursor: pointer;
-  text-align: center;
-  transition: transform 0.08s ease-out;
 }
 .lu-card:hover {
-  background: var(--cream);
-  transform: translateY(-3px);
+  background: #fff8e6;
 }
 .lu-key {
-  position: absolute;
-  top: -20px;
-  left: -14px;
-  width: 36px;
-  height: 36px;
+  grid-row: span 2;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: var(--wood);
   color: var(--gold);
-  border: 3px solid var(--edge);
-  font-size: 18px;
-  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-.lu-icon {
-  width: 66px;
-  height: 66px;
-  border-radius: 50%;
-  background: var(--c);
-  border: 3px solid var(--edge);
-  font-size: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #1a1410;
+  font-size: 16px;
 }
 .lu-name {
-  font-size: 23px;
-  font-weight: 600;
-  line-height: 1.2;
+  font-size: 17px;
 }
-.lu-lvl {
-  margin-top: -6px;
+.lu-name span {
   font-size: 14px;
-  font-weight: 400;
   color: #7a6450;
 }
 .lu-desc {
-  font-size: 16px;
-  font-weight: 400;
-  line-height: 1.4;
+  font-size: 15px;
+  line-height: 1.35;
   color: #4a3828;
 }
 #hud .weapon {

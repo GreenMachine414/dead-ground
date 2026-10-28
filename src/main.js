@@ -56,6 +56,10 @@ class App {
     $('#pause-master').addEventListener('input', (e) => this.setSetting('master', +e.target.value));
     $('#intro-go').addEventListener('click', () => this.closeIntro());
     $('#error-close').addEventListener('click', () => $('#overlay-error').classList.remove('show'));
+    $('#error-copy').addEventListener('click', () => {
+      const text = $('#error-text').textContent;
+      (window.native ? window.native.copyText(text) : navigator.clipboard.writeText(text)).then(() => this.toast('Error copied'));
+    });
     this.bindSettings();
     this.bindBugs();
     this.show('main');
@@ -390,6 +394,7 @@ class App {
     if (this.hosting) return;
     this.hosting = true;
     const port = this.profile.settings.port || DEFAULT_PORT;
+    if (this.net) this.net.close();
     this.net = new Net();
     this.net.handler = (m) => this.onHostMsg(m);
     this.toast('Starting game...');
@@ -427,6 +432,7 @@ class App {
     this.save();
     $('#join-status').textContent = 'Connecting...';
     this.joining = true;
+    if (this.net) this.net.close();
     this.net = new Net();
     const hello = { name, char: this.profile.char, level: this.profile.levels[this.profile.char], v: PROTOCOL };
     try {
@@ -590,6 +596,10 @@ class App {
         return;
       }
       const d = msg.d || {};
+      if (d.v !== PROTOCOL) {
+        this.net.toClients({ t: 'kick', reason: 'Different game version: everyone needs the same version of Dead Ground' }, msg.id);
+        return;
+      }
       L.players.push({ id: msg.id, name: String(d.name || 'Survivor').slice(0, 16), char: CHARACTERS[d.char] ? d.char : 'brick', level: Math.max(1, Math.min(5, d.level | 0 || 1)) });
       this.toast((d.name || 'A survivor') + ' joined');
       this.broadcastLobby();
@@ -621,6 +631,7 @@ class App {
     if (msg.t === 'hostgone') return this.onDisconnected('The host closed the game.');
     if (msg.t !== 'h') return;
     const d = msg.d;
+    if (!this.lobby) return; // left already; anything still in flight is stale
     if (d.t === 'lobby') {
       Object.assign(this.lobby, { mode: d.mode, mapId: d.mapId, unlocked: d.unlocked, players: d.players });
       if (!this.session && this.screen === 'lobby') this.renderLobby();

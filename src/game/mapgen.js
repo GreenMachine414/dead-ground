@@ -150,14 +150,15 @@ function makeCtx(world, rng) {
       const ground = kind === 'body' || kind === 'toolbox';
       if (!ground) mark(x, z, 1, 1, 3);
       const sx = ground ? x + 0.5 : x + 0.5 + off[0], sz = ground ? z + 0.5 : z + 0.5 + off[1];
-      world.spots.loot.push({ kind, x: sx, z: sz, px: x, pz: z, face });
+      // box: the footprint it can be searched from any side of (a point for loot lying on the ground)
+      world.spots.loot.push({ kind, x: sx, z: sz, px: x, pz: z, face, box: ground ? null : [x, z, x + 1, z + 1] });
       ctx.reserve(x - 1, z - 1, 3, 3);
     },
     // a car whose trunk can be searched (trunk on the west / north end)
     lootCar(x, z, horizontal = true, color) {
       ctx.car(x, z, horizontal, color);
-      if (horizontal) world.spots.loot.push({ kind: 'car', x: x - 0.5, z: z + 1, px: x, pz: z, face: 'w', car: true });
-      else world.spots.loot.push({ kind: 'car', x: x + 1, z: z - 0.5, px: x, pz: z, face: 'n', car: true });
+      if (horizontal) world.spots.loot.push({ kind: 'car', x: x - 0.5, z: z + 1, px: x, pz: z, face: 'w', car: true, box: [x, z, x + 4, z + 2] });
+      else world.spots.loot.push({ kind: 'car', x: x + 1, z: z - 0.5, px: x, pz: z, face: 'n', car: true, box: [x, z, x + 2, z + 4] });
     },
     // organic elliptical pond (blocks movement, not bullets)
     pond(cx, cz, rx, rz) {

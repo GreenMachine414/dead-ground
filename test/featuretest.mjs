@@ -51,10 +51,15 @@ for (let m = 1; m <= 5; m++) {
     g.damageZombie(z, 1e6, p.id, 'bullet');
   }
   const before = p.points;
-  run(g, 0.1, use);
+  const gun = p.weapons[0];
+  run(g, 0.05, use);
   check('forge XX costs 10000', before - p.points === 10000, `${before - p.points}`);
-  run(g, 3);
-  check('forge XX after 100 kills', p.weapons[0].forged === 2 && g.wstat(p, p.weapons[0]).name.endsWith(' XX'));
+  check('gun goes into the forge, loaner pistol in hand', !p.weapons.includes(gun) && p.weapons[0].id === 'pistol' && g.forgeJob.w === gun);
+  run(g, 4.5, use);
+  check('still forging at 4.5 s', g.forgeJob && g.forgeJob.t > 0 && !p.weapons.includes(gun), p.prompt);
+  run(g, 0.6);
+  run(g, 0.05, use);
+  check('forge XX taken after 5 s', p.weapons.includes(gun) && p.weapons[p.cur] === gun && gun.forged === 2 && !g.forgeJob && g.wstat(p, gun).name.endsWith(' XX'));
 }
 
 // 2b) forge damage is a fixed multiplier (X x1.5, XX x2 of the unforged gun, any round), and
@@ -77,13 +82,14 @@ for (let m = 1; m <= 5; m++) {
   check('bosses take half the forge bonus', walker === 1000 && Math.abs(boss - (1000 * (1 + (xx - 1) * 0.5)) / xx) < 1e-6, `boss ${boss.toFixed(1)}`);
 }
 
-// 2d) Storm Caller: 350 damage, one shot per reload at every forge level and rarity, 2.5s reload
+// 2d) Storm Caller: 350 damage, 3 shots per reload at every forge level and rarity, one every 1.5 s
 {
   const g = quiet(5);
   const p = g.players[0];
   const st = (lvl, r) => g.wstat(p, g.makeWeapon('tesla', lvl, r));
   const mags = [st(0, 0), st(1, 4), st(2, 4)].map((s) => s.mag);
-  check('storm caller nerf', st(0, 0).damage === 350 && st(0, 0).reload === 2.5 && mags.every((m) => m === 1), `mags ${mags}`);
+  // minimum rarity Epic, so a "common" one comes out Epic (x1.42)
+  check('storm caller stats', g.makeWeapon('tesla').rarity === 3 && Math.round(st(0, 0).damage) === 497 && Math.abs(1 / st(0, 0).rate - 1.5) < 1e-9 && mags.every((m) => m === 3), `mags ${mags}`);
 }
 
 // 2c) runners stay faster than walkers but never outrun a walking player
@@ -273,6 +279,131 @@ for (let m = 3; m <= 5; m++) {
   const c = p.cur;
   tick({ swap: 1 });
   check('slot keys and swap presses', a === 1 && b === 1 && c === 1 && p.cur === 0, `${a}${b}${c}${p.cur}`);
+}
+
+// 11) Burners set you on fire instead of exploding when they die
+{
+  const g = quiet(5);
+  const p = g.players[0];
+  const z = g.spawnZombie('burner', p.x + 1.2, p.z, false);
+  z.state = 'move';
+  let lit = false;
+  for (let i = 0; i < 3 / DT && !lit; i++) {
+    run(g, DT);
+    lit = p.burnT > 0;
+  }
+  p.invuln = 0;
+  g.removeZombie(z);
+  const hp = p.hp;
+  run(g, 1);
+  check('burner hit sets you on fire', lit && p.hp < hp, `hp ${Math.round(hp)} -> ${Math.round(p.hp)}`);
+  const z2 = g.spawnZombie('burner', p.x + 6, p.z, false);
+  g.damageZombie(z2, 1e6, p.id, 'bullet');
+  check('dead burner does not explode', !g.drainEvents().some((e) => e.k === 'boom'));
+}
+
+// 12) +5 max health per level up
+{
+  const g = quiet(1);
+  const p = g.players[0];
+  const hp0 = p.maxHp, r0 = p.rank;
+  g.gainXp(p, 5000);
+  check('level ups add 5 max health each', p.rank > r0 && p.maxHp === hp0 + 5 * (p.rank - r0), `+${p.rank - r0} levels, ${hp0} -> ${p.maxHp}`);
+}
+
+// 13) rarity floors: minigun / storm caller Epic+, plasma ray / launcher Rare+
+{
+  const g = quiet(5);
+  const guns = (r) => g.gunsFor(r);
+  check('rarity floors', !guns(1).some((w) => ['gl', 'raygun', 'minigun', 'tesla'].includes(w)) && guns(2).includes('gl') && !guns(2).includes('tesla') && guns(3).includes('minigun') && guns(3).includes('tesla'));
+}
+
+// 14) story steps run alongside the rounds (map 2: brute at next round, timed substations,
+// souls, horde defend, boss gated to round 6)
+{
+  const g = new Game({ mapId: 2, mode: 'story', seed: 5, unlockedMap: 5, players: [{ id: 0, name: 'P', char: 'volt', level: 3 }] });
+  const p = g.players[0];
+  check('next-round step waits', g.ss.waiting && g.ss.waitRound === 1 && !g.zombies.some((z) => z.type === 'brute'));
+  g.startWave();
+  run(g, DT);
+  check('next-round step starts with the round', !g.ss.waiting && g.zombies.some((z) => z.type === 'brute'));
+  // finishing a step no longer starts a round
+  const w = g.wave;
+  for (const z of [...g.zombies]) if (z.type === 'brute') g.damageZombie(z, 1e9, p.id, 'bullet');
+  run(g, DT);
+  const drop = g.pickups.find((k) => k.kind === 'item');
+  p.x = drop.x;
+  p.z = drop.z;
+  run(g, 0.1);
+  check('finishing a step does not start a round', g.stepIdx === 1 && g.wave === w, `step ${g.stepIdx}, wave ${w} -> ${g.wave}`);
+  // timed sequence: one station done, the other left too long -> both reset
+  g.ss.stations[0].prog = 1;
+  run(g, DT);
+  check('timed sequence starts its clock', g.ss.left > 39);
+  g.ss.left = 0.01;
+  run(g, 0.05);
+  check('timed sequence resets when it runs out', g.ss.stations.every((st) => !st.done && st.prog === 0) && g.ss.left === undefined);
+  for (const st of g.ss.stations) st.prog = 1;
+  run(g, DT);
+  // souls: kills inside the zone count, kills outside don't
+  check('souls step started', g.step.type === 'souls');
+  const zone = g.ss.zone;
+  const far = g.spawnZombie('walker', zone.x + zone.r + 5, zone.z, false);
+  g.damageZombie(far, 1e9, p.id, 'bullet');
+  for (let i = 0; i < 15; i++) g.damageZombie(g.spawnZombie('walker', zone.x + 1, zone.z, false), 1e9, p.id, 'bullet');
+  check('souls count only near the collector', g.ss.got === 15, `got ${g.ss.got}`);
+  run(g, DT);
+  // horde: zombies keep coming after the round's own quota is used up
+  check('horde step active', g.step.horde === true);
+  for (const z of [...g.zombies]) g.removeZombie(z);
+  g.toSpawn = 0;
+  run(g, 5);
+  check('horde keeps spawning past the round quota', g.toSpawn === 0 && g.zombies.length > 0, `zombies ${g.zombies.length}`);
+  g.ss.left = 0;
+  run(g, DT);
+  check('round-gated boss waits for round 6', g.ss.waiting && g.ss.waitRound === 6 && !g.zombies.some((z) => z.type === 'abomination'));
+  while (g.wave < 6) g.startWave();
+  run(g, DT);
+  check('round-gated boss arrives on round 6', g.zombies.some((z) => z.type === 'abomination'));
+}
+
+// 15) containers can be searched from every open side (walls still block)
+{
+  let open = 0, bad = [];
+  for (let m = 1; m <= 5; m++) {
+    const g = quiet(m);
+    const p = g.players[0];
+    const { W, grid } = g.world;
+    for (const c of g.containers) {
+      if (!c.box) continue;
+      const [x0, z0, x1, z1] = c.box;
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      for (const [x, z] of [[mx, z0 - 0.75], [mx, z1 + 0.75], [x0 - 0.75, mz], [x1 + 0.75, mz]]) {
+        if (grid[Math.floor(z) * W + Math.floor(x)] !== 0) continue; // a wall or prop is there
+        open++;
+        p.x = x;
+        p.z = z;
+        if (g.lootReach(p, c) === Infinity) bad.push(`map${m} ${c.kind}@${x.toFixed(1)},${z.toFixed(1)}`);
+      }
+    }
+  }
+  check('containers searchable from every open side', open > 100 && !bad.length, `${open} sides, unreachable: ${bad.slice(0, 5).join(' ')}`);
+  // and not through a wall: a player on the far side of a building wall can't reach in
+  const g = quiet(1);
+  const { W, grid } = g.world;
+  let through = 0;
+  for (const c of g.containers) {
+    if (!c.box) continue;
+    const [x0, z0, x1, z1] = c.box;
+    for (const [wx, wz, px, pz] of [[x0 - 0.5, z0 + 0.5, x0 - 1.5, z0 + 0.5], [x1 + 0.5, z0 + 0.5, x1 + 1.5, z0 + 0.5], [x0 + 0.5, z0 - 0.5, x0 + 0.5, z0 - 1.5], [x0 + 0.5, z1 + 0.5, x0 + 0.5, z1 + 1.5]]) {
+      const v = grid[Math.floor(wz) * W + Math.floor(wx)];
+      if (v !== 1 && v !== 2) continue; // only real walls
+      g.players[0].x = px;
+      g.players[0].z = pz;
+      if (g.lootReach(g.players[0], c) !== Infinity) through++;
+    }
+  }
+  check('containers not searchable through walls', through === 0, `through=${through}`);
 }
 
 console.log(failures ? `${failures} FAILED` : 'ALL PASSED');

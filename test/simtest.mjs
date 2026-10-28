@@ -100,7 +100,7 @@ for (const m of MAPS) {
   const opened = new Set();
   for (const c of g.containers) {
     p.x = c.x; p.z = c.z;
-    for (let i = 0; i < 150 && !opened.has(c.id); i++) {
+    for (let i = 0; i < 400 && !opened.has(c.id); i++) { // a neighbouring container may get searched first
       p.invuln = 99;
       g.setInput(0, { mx: 0, mz: 0, ax: c.x + 1, az: c.z, use: true, acts: {} });
       g.update(DT);

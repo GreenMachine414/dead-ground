@@ -8,7 +8,7 @@ export const WEAPONS = {
     ammoCost: 250, color: 0xffe08a, sound: 'pistol', len: 0.45, gunColor: 0x2a2a2a, boxWeight: 0,
   },
   revolver: {
-    name: 'Python .357', map: 1, type: 'hitscan', damage: 112, rate: 2.2, auto: false,
+    name: 'Python .357', map: 1, type: 'hitscan', damage: 160, rate: 2.2, auto: false,
     mag: 6, reserve: 54, reload: 2.0, spread: 0.01, range: 36, pierce: 3,
     ammoCost: 500, color: 0xffd060, sound: 'revolver', len: 0.55, gunColor: 0x8a8a90, boxWeight: 8,
   },
@@ -28,12 +28,12 @@ export const WEAPONS = {
     ammoCost: 900, color: 0xffe070, sound: 'rifle', len: 0.95, gunColor: 0x3a4030, boxWeight: 10,
   },
   gl: {
-    name: 'Thumper GL', map: 2, type: 'projectile', damage: 260, splash: 3.6, rate: 1.4, auto: false,
+    name: 'Thumper GL', map: 2, minRarity: 2, type: 'projectile', damage: 260, splash: 3.6, rate: 1.4, auto: false,
     mag: 4, reserve: 28, reload: 2.6, spread: 0.01, range: 22, projSpeed: 22, proj: 'grenade', lob: true,
     ammoCost: 1000, color: 0xff9040, sound: 'thump', len: 0.8, gunColor: 0x4a5a3a, boxWeight: 8,
   },
   sniper: {
-    name: 'Longshot .50', map: 3, type: 'hitscan', damage: 150, rate: 1.1, auto: false,
+    name: 'Longshot .50', map: 3, type: 'hitscan', damage: 250, rate: 1.1, auto: false,
     mag: 5, reserve: 40, reload: 2.8, spread: 0.0, range: 70, pierce: 8,
     ammoCost: 1000, color: 0xffffff, sound: 'sniper', len: 1.25, gunColor: 0x252a20, boxWeight: 7,
   },
@@ -48,17 +48,17 @@ export const WEAPONS = {
     ammoCost: 1300, color: 0xffd080, sound: 'rifle', len: 1.15, gunColor: 0x2e3328, boxWeight: 7,
   },
   raygun: {
-    name: 'Plasma Ray', map: 4, type: 'projectile', damage: 200, pierce: 3, rate: 3.2, auto: false,
+    name: 'Plasma Ray', map: 4, minRarity: 2, type: 'projectile', damage: 200, pierce: 3, rate: 3.2, auto: false,
     mag: 20, reserve: 160, reload: 2.2, spread: 0.01, range: 40, projSpeed: 40, proj: 'ray',
     ammoCost: 1500, color: 0x40ff60, sound: 'ray', len: 0.6, gunColor: 0xc0c8d0, boxWeight: 4,
   },
   tesla: {
-    name: 'Storm Caller', map: 5, type: 'chain', damage: 350, chain: 7, rate: 1.6, auto: false,
-    mag: 1, fixedMag: true, reserve: 72, reload: 2.5, spread: 0, range: 18,
+    name: 'Storm Caller', map: 5, minRarity: 3, type: 'chain', damage: 350, chain: 7, rate: 1 / 1.5, auto: false,
+    mag: 3, fixedMag: true, reserve: 72, reload: 2.5, spread: 0, range: 18,
     ammoCost: 1800, color: 0x80c8ff, sound: 'zap', len: 0.9, gunColor: 0x4a5a7a, boxWeight: 3,
   },
   minigun: {
-    name: 'Ripper Minigun', map: 5, type: 'hitscan', damage: 58, rate: 24, auto: true,
+    name: 'Ripper Minigun', map: 5, minRarity: 3, type: 'hitscan', damage: 58, rate: 24, auto: true,
     mag: 200, reserve: 600, reload: 5.0, spread: 0.09, range: 34, pierce: 2, moveMult: 0.7,
     ammoCost: 1800, color: 0xffc060, sound: 'smg', len: 1.2, gunColor: 0x3a3a3a, boxWeight: 4,
   },
@@ -70,7 +70,7 @@ export const WEAPONS = {
 };
 
 // Pack-a-Punch style upgrade ("Weapon Forge")
-export const FORGE = { cost: 5000, magMult: 1.5, reserveMult: 1.5 };
+export const FORGE = { cost: 5000, magMult: 1.5, reserveMult: 1.5, time: 5 }; // time: seconds in the forge
 // Second forge level ("XX"): unlocked by getting `kills` kills with a forged gun; stacks on FORGE.
 export const FORGE2 = { cost: 10000, kills: 100, magMult: 1.25, reserveMult: 1.25 };
 // Fixed damage multiplier by forge level 0 / 1 (X) / 2 (XX), relative to the unforged gun
@@ -117,7 +117,7 @@ function buildStats(w, forged, rarity) {
     ...w,
     name: w.name + (forged >= 2 ? ' XX' : forged ? ' X' : ''),
     damage: w.damage * FORGE_DMG[forged] * r.dmg,
-    // fixedMag guns (Storm Caller: one shot per reload) keep their magazine at every level
+    // fixedMag guns (Storm Caller: 3 shots per reload) keep their magazine at every level
     mag: w.fixedMag ? w.mag : Math.round(w.mag * k('magMult') * r.mag),
     reserve: Math.round(w.reserve * k('reserveMult') * r.mag),
     reload: w.reload * r.reload,
