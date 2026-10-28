@@ -12,8 +12,8 @@
 import { Peer } from 'peerjs';
 
 export const DEFAULT_PORT = 27015;
-export const PROTOCOL = 2;
-const PREFIX = 'deadground-v2-';
+export const PROTOCOL = 3;
+const PREFIX = 'deadground-v3-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O or 1/I mix-ups
 const CODE_LEN = 6;
 const FIRST_PEER_ID = 100; // relay clients get 1, 2, ...; code clients start here
@@ -23,6 +23,10 @@ const FIRST_PEER_ID = 100; // relay clients get 1, 2, ...; code clients start he
 // snapshots for that player until the queue drains.
 const MAX_QUEUED = 16 * 1024;
 const MAX_HELD_EVENTS = 400;
+// WebRTC often never reports a closed connection, so code clients say goodbye when they leave
+// and ping while idle; the host drops anyone it hasn't heard from in LINK_TIMEOUT.
+const PING_MS = 2000;
+const LINK_TIMEOUT = 10000;
 
 // bytes waiting to go out on a PeerJS connection (browser buffer + PeerJS's own queue)
 function queued(conn) {
@@ -75,6 +79,7 @@ export class Net {
     this.code = null;
     this.handler = null;
     this.onClose = null;
+    this.timer = null; // host: stale-link sweep, client: ping
   }
 
   emit(msg) {
@@ -120,6 +125,11 @@ export class Net {
           opened = true;
           clearTimeout(timer);
           this.peer = peer;
+          clearInterval(this.timer);
+          this.timer = setInterval(() => {
+            const now = Date.now();
+            for (const c of this.links.values()) if (now - c.seen > LINK_TIMEOUT) c.drop();
+          }, PING_MS);
           resolve(code);
         });
         peer.on('connection', (conn) => this.acceptPeer(conn));
@@ -141,9 +151,13 @@ export class Net {
 
   acceptPeer(conn) {
     let id = null;
+    conn.seen = Date.now();
     conn.on('data', (raw) => {
       const msg = parse(raw);
       if (!msg) return;
+      conn.seen = Date.now();
+      if (msg.t === 'ping') return;
+      if (msg.t === 'bye') return conn.drop();
       if (id === null) {
         if (msg.t !== 'hello') return;
         id = this.nextPeerId++;
@@ -160,6 +174,10 @@ export class Net {
         this.links.delete(id);
         this.emit({ t: 'leave', id });
       }
+    };
+    conn.drop = () => {
+      gone();
+      conn.close();
     };
     conn.on('close', gone);
     conn.on('error', gone);
@@ -195,6 +213,8 @@ export class Net {
             settled = true;
             clearTimeout(timer);
             this.id = msg.id;
+            clearInterval(this.timer);
+            this.timer = setInterval(() => conn.open && conn.send('{"t":"ping"}'), PING_MS);
             resolve(msg.id);
             return;
           }
@@ -305,8 +325,14 @@ export class Net {
       setTimeout(() => c.close(), 200);
     }
     this.links.clear();
-    if (this.conn) this.conn.close();
+    clearInterval(this.timer);
+    const conn = this.conn;
     this.conn = null;
+    if (conn) {
+      // tell the host right away instead of waiting for it to notice the channel is gone
+      if (conn.open) conn.send('{"t":"bye"}');
+      setTimeout(() => conn.close(), 200);
+    }
     const peer = this.peer;
     this.peer = null;
     if (peer) setTimeout(() => peer.destroy(), 300);

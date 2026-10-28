@@ -38,6 +38,13 @@ const FORGE_FX = [
   },
 ];
 const DUST_FLARE = 0.08;
+// projectile [colour, radius] by kind (forged rays and bolts take their forge colour instead)
+const PROJ = {
+  frag: ['#4a5a3a', 0.15], grenade: ['#5a6a3a', 0.18], ray: ['#6aff8a', 0.2], bolt: ['#ff5a4a', 0.14],
+  spit: ['#8aff4a', 0.24], rock: ['#8a7058', 0.45], rocket: ['#d8d8d8', 0.18], hook: ['#c8ccd2', 0.22], other: ['#ffffff', 0.15],
+};
+const DECAL_LIFE = 30, DECAL_FADE = 4, MAX_DECALS = 400; // ground splats: seconds, fade-out, cap
+const KNIFE_TIME = 0.2, KNIFE_ARC = 2.2; // knife swing: seconds, radians swept
 // flamethrower particles: life, drag, and the distance covered per unit of launch speed
 const FLAME_LIFE = 0.42, FLAME_DRAG = 0.8, FLAME_REACH = (1 - Math.exp(-FLAME_DRAG * FLAME_LIFE)) / FLAME_DRAG; // share of motes that are big flares with a white-hot glint
 const DUST_PULSE = 1.4; // seconds between ground pulse rings
@@ -74,12 +81,6 @@ export class Renderer {
     this.canvas.className = 'game-canvas';
     container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext('2d');
-    // darkness overlay is its own layer stacked on the game canvas, so the browser's
-    // compositor stretches and blends it instead of a full-screen canvas draw
-    this.light = document.createElement('canvas');
-    this.light.className = 'light-canvas';
-    container.appendChild(this.light);
-    this.lctx = this.light.getContext('2d');
     this.zoom = 1;
     this.quality = 1; // lowered automatically if frames run slow
     this.frameMs = 16;
@@ -111,9 +112,6 @@ export class Renderer {
     this.canvas.height = Math.round(this.height * this.dpr);
     this.canvas.style.width = this.width + 'px';
     this.canvas.style.height = this.height + 'px';
-    // darkness + vignette overlay: soft gradients, so quarter resolution is plenty
-    this.light.width = Math.ceil(this.canvas.width / 4);
-    this.light.height = Math.ceil(this.canvas.height / 4);
   }
 
   // 'auto' adapts to the frame rate; 'high' / 'low' are fixed
@@ -176,7 +174,6 @@ export class Renderer {
   dispose() {
     window.removeEventListener('resize', this.onResize);
     this.canvas.remove();
-    this.light.remove();
   }
 
   get u() {
@@ -232,6 +229,8 @@ export class Renderer {
     this.players = new Map();
     this.zombies = new Map();
     this.dying = [];
+    this.decals = [];
+    this.splatSprites = this.splatSprites || new Map();
     this.pickups = new Map();
     this.particles = [];
     this.tracers = [];
@@ -278,8 +277,8 @@ export class Renderer {
     if (this.texts.length > 80) this.texts.shift();
   }
 
-  // The ground is kept as small tiles: decals then only touch (and re-upload) the
-  // tiles they overlap instead of one huge map-sized texture.
+  // The ground is kept as small tiles so only the visible ones are drawn and no single
+  // map-sized texture has to be uploaded. They never change after this (see splat).
   makeGroundTiles(ground) {
     this.tiles = [];
     this.tilesX = Math.ceil(ground.width / TILE);
@@ -291,33 +290,52 @@ export class Renderer {
         t.height = Math.min(TILE, ground.height - ty * TILE);
         const g = t.getContext('2d');
         g.drawImage(ground, -tx * TILE, -ty * TILE);
-        this.tiles.push({ canvas: t, ctx: g, tx, ty });
+        this.tiles.push({ canvas: t, tx, ty });
       }
     }
     ground.width = ground.height = 0;
   }
 
+  // Blood, scorch and slime marks are short-lived decals drawn from a few cached sprites and
+  // cleared after DECAL_LIFE seconds, so the ground textures never change (no re-uploads) and
+  // old marks don't pile up.
   splat(x, z, r, col, a = 0.5) {
-    const drops = [];
-    for (let i = 0; i < 4; i++) drops.push([(x + (Math.random() - 0.5) * r * 2.4) * PX, (z + (Math.random() - 0.5) * r * 2.4) * PX]);
-    const R = r * PX * 2.4;
-    const x0 = Math.floor((x * PX - R) / TILE), x1 = Math.floor((x * PX + R) / TILE);
-    const z0 = Math.floor((z * PX - R) / TILE), z1 = Math.floor((z * PX + R) / TILE);
-    const fill = S.rgba(col, a);
-    for (let ty = Math.max(0, z0); ty <= Math.min(this.tilesY - 1, z1); ty++) {
-      for (let tx = Math.max(0, x0); tx <= Math.min(this.tilesX - 1, x1); tx++) {
-        const g = this.tiles[ty * this.tilesX + tx].ctx;
-        g.setTransform(1, 0, 0, 1, -tx * TILE, -ty * TILE);
-        g.fillStyle = fill;
-        S.blob(g, x * PX, z * PX, r * PX, x * 3 + z, 0.3, 8);
-        g.fill();
-        for (const [dx, dz] of drops) {
-          S.circle(g, dx, dz, r * PX * 0.18);
-          g.fill();
-        }
-        g.setTransform(1, 0, 0, 1, 0, 0);
-      }
+    if (this.decals.length >= MAX_DECALS) this.decals.shift();
+    this.decals.push({ x, z, r, a, born: this.time, spr: this.splatSprite(col, (Math.random() * 4) | 0) });
+  }
+
+  splatSprite(col, v) {
+    const key = col + v;
+    let cv = this.splatSprites.get(key);
+    if (cv) return cv;
+    const N = 64, rr = N / 2.8; // the sprite spans +-1.4 radii
+    cv = document.createElement('canvas');
+    cv.width = cv.height = N;
+    const g = cv.getContext('2d');
+    g.fillStyle = col;
+    S.blob(g, N / 2, N / 2, rr, v * 7 + 3, 0.3, 8);
+    g.fill();
+    for (let i = 0; i < 4; i++) {
+      S.circle(g, N / 2 + (Math.random() - 0.5) * rr * 2.4, N / 2 + (Math.random() - 0.5) * rr * 2.4, rr * 0.18);
+      g.fill();
     }
+    this.splatSprites.set(key, cv);
+    return cv;
+  }
+
+  drawDecals() {
+    const c = this.ctx, u = this.u, d = this.decals, t = this.time;
+    let old = 0;
+    while (old < d.length && t - d[old].born > DECAL_LIFE) old++;
+    if (old) d.splice(0, old);
+    const hw = this.canvas.width / u / 2 + 2, hh = this.canvas.height / u / 2 + 2;
+    for (const m of d) {
+      if (Math.abs(m.x - this.cam.x) > hw || Math.abs(m.z - this.cam.z) > hh) continue;
+      const S2 = m.r * u * 2.8;
+      c.globalAlpha = m.a * Math.min(1, (DECAL_LIFE - (t - m.born)) / DECAL_FADE);
+      c.drawImage(m.spr, this.sx(m.x) - S2 / 2, this.sy(m.z) - S2 / 2, S2, S2);
+    }
+    c.globalAlpha = 1;
   }
 
   // ---------------------------------------------------------------- frame
@@ -375,6 +393,8 @@ export class Renderer {
       o.walk += Math.hypot(o.x - ox, o.z - oz) * 3.2;
       o.moving = local ? view.localMoving : p.mv;
       o.p = p;
+      // set alight by a Burner
+      if (p.bn && Math.random() < dt * 22) this.emit(o.x + (Math.random() - 0.5) * 0.5, o.z, 0.6 + Math.random(), 0, 0, 1.6, Math.random() < 0.5 ? '#ff8a2a' : '#ffd04a', 0.5, 0.18, { grow: -0.6, glow: true });
     }
     for (const id of [...this.players.keys()]) if (!seen.has(id)) this.players.delete(id);
   }
@@ -637,6 +657,7 @@ export class Renderer {
 
   drawGroundLayer(snap, view) {
     const c = this.ctx, u = this.u;
+    this.drawDecals();
     // hazards
     for (const [, kind, x, z, r, t] of snap.H) {
       const X = this.sx(x), Y = this.sy(z), R = r * u;
@@ -729,9 +750,9 @@ export class Renderer {
       c.lineWidth = u * 0.07;
       c.stroke();
       if (p.p.sh > 0) {
-        // Aegis shield
+        // Aegis shield: flashes red for a moment when it takes a hit, like any other damage
         S.ellipse(c, this.sx(p.x), this.sy(p.z) - u * 0.6, u * 0.62, u * 0.75);
-        c.strokeStyle = 'rgba(122,184,255,0.55)';
+        c.strokeStyle = this.time - (p.hurtT || -1) < 0.25 ? 'rgba(255,70,50,0.9)' : 'rgba(122,184,255,0.55)';
         c.lineWidth = u * 0.05;
         c.stroke();
       }
@@ -1184,6 +1205,22 @@ export class Renderer {
         c.fill();
         this.glowAt(o.x, o.z, 3, '#ff8a3a', 0.35);
         if (Math.random() < 0.2) this.emit(o.x + (Math.random() - 0.5), o.z, 0.8, 0, 0, 1.5, '#ffb050', 0.8, 0.06, { glow: true });
+        // a gun in the forge hovers over it: dim while forging, glowing in its forge colour when ready
+        const job = snap.F;
+        if (job) {
+          const [wid, lvl, rarity, prog, owner] = job;
+          const ready = prog >= 1, fx = FORGE_FX[lvl];
+          const gs = S.gunSprite(wid, lvl, u * 1.2);
+          const gy = Y - u * 1.9 + Math.sin(t * 3) * u * 0.1;
+          this.glowAt(o.x, o.z - 1.9, ready ? 1.6 : 1, fx.aura, ready ? 0.6 : 0.3);
+          c.globalAlpha = ready ? 1 : 0.55;
+          c.drawImage(gs.canvas, X - gs.len / 2, gy - gs.canvas.height / 2);
+          c.globalAlpha = 1;
+          const name = `${RARITY[rarity].name} ${WEAPONS[wid].name} ${lvl >= 2 ? 'XX' : 'X'}`;
+          const mine = this.me && this.me.p.id === owner;
+          this.label(o.x, o.z, 3.4, ready ? (mine ? `Ready: ${name}` : name) : `Forging ${Math.round(prog * 100)}%`, ready ? fx.aura : '#ffaa60', 9);
+          return;
+        }
         this.machineLabel(o.x, o.z, 2.2, 'Weapon Forge', this.forgeDetailFn, '#ffaa60');
         return;
       }
@@ -1426,15 +1463,53 @@ export class Renderer {
     const look = S.playerLook(p.c);
     const w = p.w[p.cw] || p.w[0];
     const flicker = p.iv && p.s === 0 && Math.floor(this.time * 12) % 2 === 0;
+    const knife = p.s === 0 && o.knifeT !== undefined ? (this.time - o.knifeT) / KNIFE_TIME : 1;
     S.drawPerson(this.ctx, this.sx(o.x), this.sy(o.z), this.u, {
-      ...look, aim: o.a, walk: o.walk, moving: o.moving && p.s === 0, time: this.time, gun: p.s === 0 && w ? w[0] : null, forged: w && w[1],
+      ...look, aim: o.a, walk: o.walk, moving: o.moving && p.s === 0, time: this.time, gun: p.s === 0 && w && knife >= 1 ? w[0] : null, forged: w && w[1],
       down: p.s === 1, alpha: flicker ? 0.45 : 1,
     });
+    if (knife < 1) this.drawKnife(o, knife);
     if (p.s === 0 && w && w[1]) this.gunDust(o, FORGE_FX[w[1]]);
     if (p.id !== view.localId) {
       const tag = p.s === 1 ? `${p.n} — DOWN ${Math.ceil(p.bl)}s` : p.n;
       this.label(o.x, o.z, 2.9, tag, p.s === 1 ? '#ff8070' : '#a8d4ff', 999, p.hp / p.mh);
     }
+  }
+
+  // Knife swing: the gun is put away and a blade sweeps across the aim direction (k = 0..1),
+  // easing out, with a fading swish along the tip's path.
+  drawKnife(o, k) {
+    const c = this.ctx, u = this.u;
+    const e = 1 - (1 - k) * (1 - k);
+    const a0 = o.knifeA - KNIFE_ARC / 2, cur = a0 + KNIFE_ARC * e;
+    const X = this.sx(o.x), Y = this.sy(o.z) - u * 0.75;
+    c.globalAlpha = 0.45 * (1 - k);
+    c.strokeStyle = '#ffffff';
+    c.lineWidth = u * 0.12;
+    c.lineCap = 'round';
+    c.beginPath();
+    c.arc(X, Y, u * 1.1, Math.max(a0, cur - 1.4), cur);
+    c.stroke();
+    c.globalAlpha = 1;
+    c.save();
+    c.translate(X, Y);
+    c.rotate(cur);
+    c.fillStyle = '#4a3020'; // handle
+    c.fillRect(u * 0.3, -u * 0.06, u * 0.28, u * 0.12);
+    c.fillStyle = '#9a9aa2'; // guard
+    c.fillRect(u * 0.56, -u * 0.11, u * 0.05, u * 0.22);
+    c.beginPath(); // blade, tapering to a point
+    c.moveTo(u * 0.61, -u * 0.075);
+    c.lineTo(u * 1.05, -u * 0.045);
+    c.lineTo(u * 1.22, 0);
+    c.lineTo(u * 0.61, u * 0.06);
+    c.closePath();
+    c.fillStyle = '#e4e8ec';
+    c.fill();
+    c.strokeStyle = OUT;
+    c.lineWidth = u * 0.025;
+    c.stroke();
+    c.restore();
   }
 
   // Forged-gun aura (fx = FORGE_FX[level]): a breathing glow on the gun, sparks swirling up around
@@ -1503,7 +1578,7 @@ export class Renderer {
       ...look, aim: o.a, walk: o.walk, moving: o.moving, time: this.time, seed: o.seed,
       attack: o.st === 2 || o.st === 3, hurt: o.flags & 2, alpha: o.type === 'phantom' ? 0.55 : 1,
     });
-    S.drawZombieExtras(c, def.look || o.type, X, Y + yOff, u * sc, this.time, o.a);
+    S.drawZombieExtras(c, def.look || o.type, X, Y + yOff, u * sc, this.time, o.a, o.st === 2 || o.st === 3);
     if (rising) {
       c.restore();
       S.ellipse(c, X, Y, u * 0.5 * sc, u * 0.18 * sc);
@@ -1585,7 +1660,7 @@ export class Renderer {
       return;
     }
     if (kind === 'item') {
-      const col = { radio_part: '#ffd04a', keycard: '#5ac8ff', charge: '#ff7a4a', sample: '#7affd8', vial: '#7aff7a' }[sub] || '#ffffff';
+      const col = { radio_part: '#ffd04a', fuel: '#ff5a3a', keycard: '#5ac8ff', charge: '#ff7a4a', sample: '#7affd8', vial: '#7aff7a' }[sub] || '#ffffff';
       const g = c.createLinearGradient(0, Y, 0, Y - u * 5);
       g.addColorStop(0, S.rgba(col, 0.45));
       g.addColorStop(1, S.rgba(col, 0));
@@ -1696,15 +1771,15 @@ export class Renderer {
 
   drawProjectiles(snap) {
     const c = this.ctx, u = this.u;
-    for (const [, kind, x, y, z, forged] of snap.R) {
+    for (const [, kind, x, y, z, last] of snap.R) {
       const X = this.sx(x), Y = this.sy(z) - y * K * u;
-      const spec = {
-        frag: ['#4a5a3a', 0.15], grenade: ['#5a6a3a', 0.18], ray: [forged ? FORGE_FX[forged].ray : '#6aff8a', 0.2], bolt: [forged ? FORGE_FX[forged].tracer : '#ff5a4a', 0.14],
-        spit: ['#8aff4a', 0.24], rock: ['#8a7058', 0.45], rocket: ['#d8d8d8', 0.18], hook: ['#c8ccd2', 0.22],
-      }[kind] || ['#ffffff', 0.15];
+      // the last slot is the forge level, except on a boss's hook where it is the boss's id
+      const fx = kind === 'hook' ? null : FORGE_FX[last];
+      const spec = PROJ[kind] || PROJ.other;
+      const col = fx && kind === 'ray' ? fx.ray : fx && kind === 'bolt' ? fx.tracer : spec[0];
       if (kind === 'hook') {
-        // chain back to the boss that threw it (its id rides in the last slot)
-        const owner = this.zombies.get(forged);
+        // chain back to the boss that threw it
+        const owner = this.zombies.get(last);
         if (owner) {
           c.strokeStyle = '#5a5048';
           c.lineWidth = u * 0.08;
@@ -1719,15 +1794,15 @@ export class Renderer {
       S.shadow(this.ctx, X, this.sy(z), u * spec[1], u * spec[1] * 0.4, 0.2);
       if (kind === 'ray' || kind === 'spit' || kind === 'bolt') {
         S.circle(c, X, Y, u * spec[1] * 2);
-        c.fillStyle = S.rgba(spec[0], 0.3);
+        c.fillStyle = S.rgba(col, 0.3);
         c.fill();
-        this.emit(x, z, y, 0, 0, 0, spec[0], 0.25, spec[1] * 0.8, { glow: true });
+        this.emit(x, z, y, 0, 0, 0, col, 0.25, spec[1] * 0.8, { glow: true });
       } else if (kind === 'rocket' || kind === 'grenade') {
-        const hot = forged && kind === 'grenade'; // a forged launcher's shell trails coloured smoke
-        this.emit(x, z, y, 0, 0, 0.3, hot ? FORGE_FX[forged].tracer : '#b8b8b8', 0.5, 0.18, { grow: 1.5, glow: hot });
+        const hot = fx && kind === 'grenade'; // a forged launcher's shell trails coloured smoke
+        this.emit(x, z, y, 0, 0, 0.3, hot ? fx.tracer : '#b8b8b8', 0.5, 0.18, { grow: 1.5, glow: !!hot });
       }
       S.circle(c, X, Y, u * spec[1]);
-      S.fillStroke(c, spec[0], OUT, u * 0.03);
+      S.fillStroke(c, col, OUT, u * 0.03);
     }
   }
 
@@ -1842,26 +1917,7 @@ export class Renderer {
     for (const [, kind, x, z, r] of snap.H) if (kind === 'fire' || kind === 'napalm' || kind === 'heal') lights.push([x, z, r * 2.5, kind === 'heal' ? '#7fffb0' : '#ff8a3a', 0.35]);
     for (const o of this.zombies.values()) if (o.type === 'burner' || o.flags & 1) lights.push([o.x, o.z, 3, '#ff8a3a', 0.3]);
     const vis = lights.filter(([x, z, r]) => Math.abs(x - this.cam.x) < this.canvas.width / u / 2 + r && Math.abs(z - this.cam.z) < this.canvas.height / u / 2 + r);
-    // darkness with holes cut by lights, drawn at low resolution and stretched
-    // (the vignette is a static CSS overlay, see #game::after)
-    if (th.dark > 0) {
-      const L = this.lctx, lw = this.light.width, lh = this.light.height, ls = lw / this.canvas.width;
-      L.globalCompositeOperation = 'source-over';
-      L.clearRect(0, 0, lw, lh);
-      L.globalAlpha = th.dark;
-      L.fillStyle = th.tint;
-      L.fillRect(0, 0, lw, lh);
-      L.globalAlpha = 1;
-      L.globalCompositeOperation = 'destination-out';
-      const hole = this.glowSprite('hole');
-      for (const [x, z, r] of vis) {
-        const X = this.sx(x) * ls, Y = (this.sy(z) - u * 0.5) * ls, R = r * u * ls;
-        L.drawImage(hole, X - R, Y - R, R * 2, R * 2);
-      }
-      L.globalCompositeOperation = 'source-over';
-    }
-    this.light.style.display = th.dark > 0 ? '' : 'none';
-    // warm additive glow
+    // warm additive glow (the vignette is a static CSS overlay, see #game::after)
     c.globalCompositeOperation = 'lighter';
     for (const [x, z, r, col, a] of vis) {
       if (a <= 0.26 && col === '#ffe8c0') continue;
@@ -1885,26 +1941,13 @@ export class Renderer {
     const g = cv.getContext('2d');
     {
       const gr = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
-      if (kind === 'hole') {
-        gr.addColorStop(0, 'rgba(0,0,0,1)');
-        gr.addColorStop(0.5, 'rgba(0,0,0,0.6)');
-        gr.addColorStop(1, 'rgba(0,0,0,0)');
-      } else {
-        gr.addColorStop(0, S.rgba(kind, 1));
-        gr.addColorStop(1, S.rgba(kind, 0));
-      }
+      gr.addColorStop(0, S.rgba(kind, 1));
+      gr.addColorStop(1, S.rgba(kind, 0));
       g.fillStyle = gr;
       g.fillRect(0, 0, N, N);
     }
     this.glowSprites.set(kind, cv);
     return cv;
-  }
-
-  // clear the darkness overlay behind UI drawn on the game canvas (screen px rect)
-  unshade(x, y, w, h) {
-    if (this.theme.dark <= 0) return;
-    const ls = this.light.width / this.canvas.width;
-    this.lctx.clearRect(Math.floor(x * ls), Math.floor(y * ls), Math.ceil(w * ls) + 2, Math.ceil(h * ls) + 2);
   }
 
   // label above a world point, only when the local player is within `near` units
@@ -1938,7 +1981,7 @@ export class Renderer {
     const w = p && (p.w[p.cw] || p.w[0]);
     if (!w || !w[1]) return `X ${FORGE.cost}`;
     if (w[1] >= 2) return 'max level';
-    const left = FORGE2.kills - (w[7] || 0);
+    const left = FORGE2.kills - (w[6] || 0);
     return left > 0 ? `XX ${FORGE2.cost} + ${left} kills` : `XX ${FORGE2.cost}`;
   }
 
@@ -1962,7 +2005,6 @@ export class Renderer {
         this.textW.set(wk, (tw = c.measureText(text).width));
       }
       const w = tw + fs;
-      this.unshade(X - w / 2, Y - fs * 0.8, w, fs * 1.6);
       S.rr(c, X - w / 2, Y - fs * 0.8, w, fs * 1.6, fs * 0.8);
       c.fillStyle = 'rgba(28,22,30,0.72)';
       c.fill();
@@ -1983,7 +2025,6 @@ export class Renderer {
       const X = this.sx(t.x), Y = this.sy(t.z) - (t.h + rise) * u * K * 1.4;
       const pop = f > 0.85 ? 1 + (f - 0.85) * 3 : 1;
       c.font = `800 ${t.size * u * pop}px Fredoka, Segoe UI, sans-serif`;
-      this.unshade(X - t.size * u * t.text.length * 0.35, Y - t.size * u * 0.6, t.size * u * t.text.length * 0.7, t.size * u * 1.2);
       c.globalAlpha = Math.min(1, f * 2.5);
       c.lineWidth = Math.max(2, u * 0.08);
       c.strokeStyle = 'rgba(30,20,25,0.9)';
@@ -2004,7 +2045,6 @@ export class Renderer {
       if (onScreen) {
         if (type !== 2) {
           const by = Y - u * 2.4 + Math.sin(this.time * 5) * u * 0.18;
-          this.unshade(X - u * 0.4, by - u * 0.4, u * 0.8, u * 0.6);
           c.beginPath();
           c.moveTo(X - u * 0.3, by - u * 0.3);
           c.lineTo(X + u * 0.3, by - u * 0.3);
@@ -2018,7 +2058,6 @@ export class Renderer {
         // keep arrows clear of the bottom HUD panels
         const ex = Math.max(m, Math.min(cw - m, cw / 2 + Math.cos(a) * cw)), ey = Math.max(m, Math.min(ch - 150 * this.dpr, ch / 2 + Math.sin(a) * ch));
         c.save();
-        this.unshade(ex - u * 1.5, ey - u * 1.5, u * 3, u * 3);
         c.translate(ex, ey);
         c.rotate(a);
         c.beginPath();
@@ -2069,6 +2108,20 @@ export class Renderer {
         const fx = FORGE_FX[e.f];
         const col = e.w < 0 ? '#9fdcff' : fx ? fx.tracer : S.hex(WEAPONS[WIDS[e.w]].color);
         this.tracers.push({ x1: e.x, z1: e.z, x2: e.x2, z2: e.z2, col, hot: fx && fx.hot, life: 0.08, max: 0.08 });
+        break;
+      }
+      case 'soul': {
+        // wisps fly from the dead zombie into the soul collector
+        const dx = e.x2 - e.x, dz = e.z2 - e.z;
+        for (let i = 0; i < 5; i++) {
+          const life = 0.45 + Math.random() * 0.15;
+          this.emit(e.x, e.z, 1, dx / life, dz / life, 0.6, i % 2 ? '#9fe8ff' : '#e0f8ff', life, 0.14, { glow: true });
+        }
+        break;
+      }
+      case 'hurt': {
+        const o = this.players.get(e.p);
+        if (o) o.hurtT = this.time;
         break;
       }
       case 'h':
@@ -2194,12 +2247,14 @@ export class Renderer {
         this.burst(e.x, e.z, 1, e.big ? 36 : 16, ['#b07aff', '#6a2ad0'], 3, 0.6, 0.14, { glow: true });
         this.burst(e.x2, e.z2, 1, e.big ? 36 : 16, ['#b07aff', '#6a2ad0'], 3, 0.6, 0.14, { glow: true });
         break;
-      case 'melee':
-        for (let i = 0; i < 10; i++) {
-          const a = e.a - 0.9 + (i / 9) * 1.8;
-          this.emit(e.x + Math.cos(a) * 1.3, e.z + Math.sin(a) * 1.3, 0.8, 0, 0, 0, '#ffffff', 0.15, 0.1);
+      case 'melee': {
+        const o = this.players.get(e.p);
+        if (o) {
+          o.knifeT = this.time;
+          o.knifeA = e.a;
         }
         break;
+      }
       case 'rayhit': {
         // plasma splash: a quick bright ring and sparks, no explosion
         const col = e.f ? FORGE_FX[e.f].ray : '#6aff8a';

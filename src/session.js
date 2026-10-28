@@ -273,7 +273,7 @@ export class Session {
   // later. Mirrors the host's fire-rate rule; the host's echo of the shot is muted.
   predictFire(inp, me, w, dt, now) {
     this.localFireCd -= dt;
-    if (!inp.fire || !w || w[2] <= 0 || w[4] || me.rl >= 0 || this.localFireCd > 0) return;
+    if (!inp.fire || !w || w[2] <= 0 || me.rl >= 0 || this.localFireCd > 0) return;
     const def = WEAPONS[w[0]];
     let rate = def.rate;
     if (me.pk.includes('rapid')) rate *= 1.33;
@@ -350,6 +350,9 @@ export class Session {
           break;
         case 'stepdone':
           a.play('done');
+          break;
+        case 'soul':
+          a.play('pickup', e.x2, e.z2, 0.5);
           break;
         case 'hurt':
           if (e.p === this.localId) a.play('hurt');

@@ -186,6 +186,26 @@ export async function runSmoke(app) {
         check('bigmap-closes', !s.hud.showMap);
       }
       if (m.id === 1) {
+        // swapping works while two movement keys are held: real key and wheel events through Input
+        const bot = s.input.sample;
+        delete s.input.sample; // back to the real keyboard / mouse state for a moment
+        if (!p.weapons[1]) p.weapons[1] = g.makeWeapon('smg');
+        const keys = s.input.binds;
+        const press = (type, code) => window.dispatchEvent(new KeyboardEvent(type, { code }));
+        press('keydown', keys.up);
+        press('keydown', keys.left);
+        await wait(100);
+        const c0 = p.cur;
+        press('keydown', keys.swap);
+        await wait(100);
+        press('keyup', keys.swap);
+        const c1 = p.cur;
+        window.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
+        await wait(100);
+        check('swap-while-moving', c1 !== c0 && p.cur === c0);
+        press('keyup', keys.up);
+        press('keyup', keys.left);
+        s.input.sample = bot;
         // level-up cards
         autoPick = false;
         p.choices.push(g.rollChoices(p)); // as if bought from the Upgrade Machine
@@ -213,6 +233,10 @@ export async function runSmoke(app) {
         const b = g.spawnZombie('harvester', p.x + 3.5, p.z - 1, false);
         // force its signature scythe sweep so the screenshot shows the telegraph
         b.cds = { sweep: 0, hook: 99, charge: 99, summon: 99 };
+        // one projectile of every kind in flight (a hook carries its boss's id where others carry a forge level)
+        for (const kind of ['frag', 'grenade', 'ray', 'bolt', 'spit', 'rock', 'rocket', 'hook']) {
+          g.projs.push({ id: g.nextId++, kind, owner: 'z', zid: b.id, forged: 0, x: p.x - 6, y: 1, z: p.z - 6, vx: 0, vy: 0, vz: 0, g: 0, dmg: 0, life: 0.3, r: 0.2 });
+        }
         await wait(450);
         await shot('map1-boss');
         check('boss-sweep', b.pending === 'sweep');
@@ -238,7 +262,7 @@ export async function runSmoke(app) {
     const ws = new WebSocket('ws://127.0.0.1:27016');
     ws.onmessage = (e) => msgs.push(JSON.parse(e.data));
     await new Promise((r) => (ws.onopen = r));
-    ws.send(JSON.stringify({ t: 'hello', role: 'client', d: { name: 'NetBot', char: 'doc', level: 2 } }));
+    ws.send(JSON.stringify({ t: 'hello', role: 'client', d: { name: 'NetBot', char: 'doc', level: 2, v: PROTOCOL } }));
     await wait(400);
     check('client-welcomed', msgs.some((m) => m.t === 'welcome'));
     check('lobby-broadcast', msgs.some((m) => m.t === 'h' && m.d.t === 'lobby' && m.d.players.length === 2));

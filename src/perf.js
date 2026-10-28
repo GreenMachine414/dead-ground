@@ -25,7 +25,9 @@ export async function runPerf(app, opts = {}) {
       app.lobby.unlocked = 5;
       app.lobby.mapId = sc.map;
       app.lobby.mode = 'endless';
-      app.lobbyStart();
+      const l0 = performance.now();
+      app.lobbyStart(); // builds the world, paints the ground, starts the session
+      const loadMs = Math.round(performance.now() - l0);
       await wait(300);
       app.closeIntro();
       const s = app.session;
@@ -77,6 +79,7 @@ export async function runPerf(app, opts = {}) {
       const avg = deltas.reduce((a, b) => a + b, 0) / Math.max(1, deltas.length);
       report.scenes.push({
         scene: sc.name + (opts.vector ? ' [uncached]' : ''),
+        loadMs,
         avgFps: Math.round(1000 / avg),
         low1Fps: Math.round(1000 / pct(deltas, 0.99)),
         p90Ms: +pct(deltas, 0.9).toFixed(1),

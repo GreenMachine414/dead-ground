@@ -40,7 +40,7 @@ export const ZOMBIES = {
   burner: {
     name: 'Burner', hp: 170, speed: 3.6, damage: 22, attackRate: 1.0, radius: 0.44,
     color: 0xd06a30, shirt: 0x5a2010, points: 120, scale: 1, burner: true,
-    explode: { radius: 2.8, damage: 30 },
+    ignite: { dps: 10, time: 3 }, // its hits set you on fire
   },
 
   // ---- mini-bosses ----

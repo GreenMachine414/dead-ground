@@ -17,10 +17,11 @@ export class Input {
     this.acts = {};
     this.enabled = true;
     this.handlers = {};
-    this.onWheel = null;
+    this.onWheel = null; // Ctrl + wheel (zoom)
+    this.wheelT = 0;
     this.onKey = null; // (event, normalized code) -> true if handled (keydown and keyup)
-    const on = (type, fn, el = window) => {
-      el.addEventListener(type, fn);
+    const on = (type, fn, el = window, opts) => {
+      el.addEventListener(type, fn, opts);
       this.handlers[type] = [el, fn];
     };
     on('keydown', (e) => {
@@ -51,12 +52,32 @@ export class Input {
       if (!this.enabled) return;
       if (e.button === 0) this.mouse.left = true;
       if (e.button === 2) this.acts.ability = true;
+      // middle click and the side buttons swap weapons too: many laptop keyboards can't
+      // register the swap key while some movement-key pairs are held (key ghosting)
+      if (e.button === 1 || e.button === 3 || e.button === 4) {
+        e.preventDefault();
+        this.acts.swap = (this.acts.swap | 0) + 1;
+      }
     });
     on('mouseup', (e) => {
       if (e.button === 0) this.mouse.left = false;
+      if (e.button >= 1) e.preventDefault(); // no autoscroll or back/forward navigation
     });
     on('contextmenu', (e) => e.preventDefault());
-    on('wheel', (e) => this.onWheel && this.onWheel(Math.sign(e.deltaY)));
+    // the wheel swaps weapons (it can't be blocked by key ghosting the way Q can on laptop
+    // keyboards); Ctrl + wheel zooms instead of zooming the page
+    on('wheel', (e) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        if (this.onWheel) this.onWheel(Math.sign(e.deltaY));
+        return;
+      }
+      if (!this.enabled || !e.deltaY) return;
+      const now = performance.now();
+      if (now - this.wheelT < 150) return; // one swap per notch, even from touchpads
+      this.wheelT = now;
+      this.acts.swap = (this.acts.swap | 0) + 1;
+    }, window, { passive: false });
   }
 
   dispose() {

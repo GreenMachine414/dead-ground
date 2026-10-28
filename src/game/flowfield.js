@@ -6,6 +6,9 @@ const DIRS = [
   [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2],
 ];
 const STRUCT_COST = 8;
+// 1-cell gaps (a wall corner next to a prop) only fit small zombies: big ones would wedge there
+// for good, so the field only routes through them when there is no reasonable way round
+const NARROW_COST = 12;
 
 export class FlowField {
   constructor(world) {
@@ -75,7 +78,8 @@ export class FlowField {
         const ni = nz * W + nx;
         if (grid[ni] !== 0) continue;
         if (k >= 4 && (grid[cz * W + nx] !== 0 || grid[nz * W + cx] !== 0)) continue;
-        const nd = d + DIRS[k][2] + (sgrid[ni] !== 0 ? STRUCT_COST : 0);
+        const narrow = (grid[ni - 1] !== 0 && grid[ni + 1] !== 0) || (grid[ni - W] !== 0 && grid[ni + W] !== 0);
+        const nd = d + DIRS[k][2] + (sgrid[ni] !== 0 ? STRUCT_COST : 0) + (narrow ? NARROW_COST : 0);
         if (nd < dist[ni]) {
           dist[ni] = nd;
           if (this.size < cap) this.push(ni, nd);
