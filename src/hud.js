@@ -194,24 +194,19 @@ export class Hud {
     while (this.el.notes.children.length > 6) this.el.notes.firstChild.remove();
   }
 
-  // Timed bars (looting, building, reviving, reloading) only change on sim ticks or snapshots, which
-  // looks steppy at high refresh rates or over the network. Carry the bar on at its measured rate
-  // between updates (at most 0.15 s ahead) and draw it with a transform, which skips layout.
-  bar(key, el, v, dt) {
+  // Timed bars (looting, tasks, reloading) only change on sim ticks or snapshots, which looks steppy
+  // at high refresh rates or over the network. The sim also sends how fast the bar is filling, so
+  // between updates it carries on at exactly that rate (at most 0.12 s ahead) and never steps back;
+  // drawn with a transform, which skips layout.
+  bar(key, el, v, rate, dt) {
     let b = this.bars[key];
-    if (!b) b = this.bars[key] = { v: -1, at: 0, rate: 0, shown: 0, t: 0 };
-    b.t += dt;
+    if (!b) b = this.bars[key] = { v: -1, since: 0, shown: 0 };
     if (v !== b.v) {
-      const step = v - b.v, gap = b.t - b.at;
-      if (b.v < 0 || step < 0 || step > 0.3 || gap > 0.25) {
-        // new or restarted bar: jump to it
-        b.rate = 0;
-        b.shown = v;
-      } else b.rate = b.rate ? b.rate * 0.6 + (step / Math.max(gap, 0.004)) * 0.4 : step / Math.max(gap, 0.004);
+      if (b.v < 0 || v < b.v - 0.02) b.shown = v; // new or restarted bar: jump to it
       b.v = v;
-      b.at = b.t;
-    }
-    b.shown = Math.max(b.shown, Math.min(1, v + b.rate * Math.min(b.t - b.at, 0.15)));
+      b.since = 0;
+    } else b.since += dt;
+    b.shown = Math.max(b.shown, Math.min(1, v + rate * Math.min(b.since, 0.12)));
     el.style.transform = `scaleX(${b.shown})`;
   }
 
@@ -344,7 +339,7 @@ export class Hud {
     const alt = me.w[1 - me.cw];
     this.set('alt', el.wAlt, alt ? `[${this.keys.swap}] ${RARITY[alt[4] || 0].name} ${WEAPONS[alt[0]].name}` : '');
     el.reload.style.display = me.rl >= 0 ? 'block' : 'none';
-    if (me.rl >= 0) this.bar('rl', el.reloadFill, me.rl, dt);
+    if (me.rl >= 0) this.bar('rl', el.reloadFill, me.rl, me.rs || 0, dt);
     else this.bars.rl = null;
     // XP
     this.set('xpl', el.xpLvl, 'Lv ' + me.rk);
@@ -379,7 +374,7 @@ export class Hud {
       }
       this.set('pr', el.promptText, this.pr);
       el.promptBar.style.display = me.pp >= 0 ? 'block' : 'none';
-      if (me.pp >= 0) this.bar('pp', el.promptFill, Math.min(1, me.pp), dt);
+      if (me.pp >= 0) this.bar('pp', el.promptFill, Math.min(1, me.pp), me.ps || 0, dt);
       else this.bars.pp = null;
     }
     this.hurtT = Math.max(0, this.hurtT - dt * 2);

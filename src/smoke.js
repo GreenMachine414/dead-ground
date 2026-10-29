@@ -110,6 +110,16 @@ export async function runSmoke(app) {
     check('finale-button-unlocks', lockedHidden && !btn.hidden);
     await wait(200);
     await shot('02e-lobby-finale');
+    // laptop widths: the lobby must not scroll sideways
+    const lobby = document.getElementById('screen-lobby');
+    for (const w of [1366, 1280, 1024]) {
+      lobby.style.right = 'auto';
+      lobby.style.width = w + 'px';
+      await wait(50);
+      check('lobby-fits-' + w, lobby.scrollWidth <= lobby.clientWidth + 1);
+      if (w === 1280) await shot('02f-lobby-1280');
+    }
+    lobby.style.right = lobby.style.width = '';
     // its rock score plays even with the music slider at 0 (effects muted too, so all that's heard is the score)
     const A = app.audio, vol = { ...A.vol };
     A.init();

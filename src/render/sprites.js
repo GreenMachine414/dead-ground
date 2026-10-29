@@ -454,18 +454,18 @@ export function drawPerson(ctx, x, y, u0, o) {
 // each survivor's signature gun (portraits, the finale cutscene)
 export const SIGNATURE_GUNS = { brick: 'shotgun', sparks: 'smg', doc: 'ar', rook: 'lmg', volt: 'raygun', mags: 'ar' };
 
-// Menu portrait: the survivor standing with their gun, drawn once at 3x for sharp HiDPI screens
+// Menu portrait: the survivor standing, drawn once at 3x for sharp HiDPI screens
 const portraitCache = new Map();
 export function portraitURL(charId) {
   if (portraitCache.has(charId)) return portraitCache.get(charId);
-  const W = 84, H = 96, k = 3;
+  const W = 64, H = 96, k = 3;
   const c = document.createElement('canvas');
   c.width = W * k;
   c.height = H * k;
   const g = c.getContext('2d');
   g.scale(k, k);
   g.lineJoin = 'round';
-  drawPerson(g, W / 2, H - 6, 58, { ...playerLook(charId), aim: 0.7, gun: SIGNATURE_GUNS[charId] || 'pistol', forged: 0, time: 0, walk: 0, moving: false });
+  drawPerson(g, W / 2, H - 6, 58, { ...playerLook(charId), aim: Math.PI / 2, gun: null, forged: 0, time: 0, walk: 0, moving: false });
   const url = c.toDataURL();
   portraitCache.set(charId, url);
   return url;

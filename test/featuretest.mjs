@@ -492,5 +492,18 @@ for (let m = 3; m <= 5; m++) {
   check('doc level 5 zone follows him', zone.x === q.x && zone.z === q.z && d.snapshot().H.some((h) => h[6] === q.id));
 }
 
+// 18) zombie damage grows with the round (bosses keep theirs)
+{
+  const g = quiet(1);
+  g.wave = 1;
+  const a = g.spawnZombie('walker', 10, 10, false);
+  g.wave = 11;
+  const b = g.spawnZombie('walker', 10, 10, false);
+  g.wave = 60;
+  const c = g.spawnZombie('walker', 10, 10, false);
+  const boss = g.spawnZombie('harvester', 10, 10, false);
+  check('zombie damage scales with rounds', Math.abs(b.damage / a.damage - 1.4) < 1e-9 && c.damage === a.damage * 2 && boss.damage === boss.def.damage);
+}
+
 console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
 process.exit(failures ? 1 : 0);

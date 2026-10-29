@@ -347,7 +347,7 @@ textarea {
 /* lobby */
 .lobby-grid {
   display: grid;
-  grid-template-columns: 330px 1fr 300px;
+  grid-template-columns: 330px minmax(0, 1fr) 300px;
   gap: 22px;
   flex: 1;
   min-height: 0;
@@ -419,8 +419,17 @@ textarea {
 }
 .char-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 1500px) {
+  .screen {
+    padding: 20px 24px;
+  }
+  .lobby-grid {
+    grid-template-columns: 280px minmax(0, 1fr) 250px;
+    gap: 16px;
+  }
 }
 .lobby-upgrade {
   display: flex;
@@ -442,7 +451,8 @@ textarea {
   white-space: nowrap;
 }
 .char-card {
-  padding: 12px 8px;
+  min-width: 0;
+  padding: 10px 4px;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -451,8 +461,10 @@ textarea {
 }
 .portrait {
   display: block;
-  width: 84px;
+  width: 64px;
+  max-width: 100%;
   height: 96px;
+  object-fit: contain;
   margin: -6px auto -4px;
   filter: drop-shadow(0 3px 0 rgba(36, 23, 15, 0.18));
 }
@@ -481,6 +493,10 @@ textarea {
   font-weight: 700;
   font-size: 12px;
   color: #6a5440;
+}
+.char-card .crole,
+.char-card .cab {
+  overflow-wrap: anywhere;
 }
 .char-card .cab {
   font-size: 13px;
