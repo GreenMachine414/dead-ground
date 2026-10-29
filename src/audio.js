@@ -120,8 +120,21 @@ export class Audio {
     this.music = null;
   }
 
+  // 0 explore, 1 combat, 2 a boss is on the map. Every boss fight switches to the same battle
+  // music, which stays a few seconds after the last boss falls, then the map's song comes back.
   setIntensity(level) {
-    if (this.music) this.music.setIntensity(level);
+    const m = this.music;
+    if (!m) return;
+    const now = this.ctx.currentTime;
+    if (level >= 2) this.battleUntil = now + 6;
+    const battle = level >= 2 || (m.song === 'boss' && now < this.battleUntil);
+    if (battle && m.song !== 'boss') {
+      this.areaSong = m.song;
+      this.startMusic('boss');
+    } else if (!battle && m.song === 'boss') {
+      this.startMusic(this.areaSong || 'menu');
+    }
+    this.music.setIntensity(level);
   }
 }
 

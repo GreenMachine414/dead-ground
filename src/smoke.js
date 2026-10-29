@@ -4,7 +4,7 @@ import { Game } from './game/sim.js';
 import { MAPS } from './data/maps.js';
 import { Net, PROTOCOL } from './net.js';
 import { resolveBinds } from './keybinds.js';
-import { hasVulgar } from './bugreport.js';
+import { hasVulgar, checkReport, sendReport, reportPayload } from './bugreport.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -97,6 +97,49 @@ export async function runSmoke(app) {
     app.bugCount();
     await wait(200);
     await shot('02c-bugs');
+    // the end-of-story cutscene: its lobby button only shows once map 5's story is beaten,
+    // then it plays and can be skipped
+    const completed = app.profile.completed;
+    app.openLobby('solo');
+    const btn = document.getElementById('watch-finale');
+    app.profile.completed = [];
+    app.renderLobby();
+    const lockedHidden = btn.hidden;
+    app.profile.completed = [1, 2, 3, 4, 5];
+    app.renderLobby();
+    check('finale-button-unlocks', lockedHidden && !btn.hidden);
+    await wait(200);
+    await shot('02e-lobby-finale');
+    // its rock score plays even with the music slider at 0 (effects muted too, so all that's heard is the score)
+    const A = app.audio, vol = { ...A.vol };
+    A.init();
+    A.resume();
+    A.setVolumes({ music: 0, sfx: 0, master: 0.8 });
+    const meter = A.ctx.createAnalyser();
+    A.master.connect(meter);
+    btn.click();
+    await wait(2500);
+    const buf = new Float32Array(meter.fftSize);
+    let loud = 0;
+    for (let k = 0; k < 6; k++, await wait(150)) {
+      meter.getFloatTimeDomainData(buf);
+      loud = Math.max(loud, Math.sqrt(buf.reduce((a, v) => a + v * v, 0) / buf.length));
+    }
+    report.checks.finaleLoudness = +loud.toFixed(3);
+    check('finale-music-ignores-volume', loud > 0.02);
+    A.master.disconnect(meter);
+    A.setVolumes(vol);
+    check('finale-plays', !!document.querySelector('#finale canvas'));
+    await shot('02d-finale');
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
+    await wait(1200);
+    check('finale-skips', !document.getElementById('finale') && !app.finalePlaying);
+    // and plays through to its end on its own, without errors (about 35 s)
+    const errsBefore = report.errors.length;
+    btn.click();
+    for (let t = 0; t < 45000 && (app.finalePlaying || !t); t += 500) await wait(500);
+    check('finale-ends', !app.finalePlaying && !document.getElementById('finale') && report.errors.length === errsBefore);
+    app.profile.completed = completed;
     app.show('main');
     await wait(150);
     await shot('00b-main-bugtab');
@@ -288,6 +331,14 @@ export async function runSmoke(app) {
     } else report.checks.codeSkipped = app.lobby.codeErr || 'no code';
     await shot('05-host-lobby');
     app.lobby.mapId = 2;
+    // the host can't start until every guest has readied up
+    app.lobbyStart();
+    check('start-waits-for-ready', !app.session && document.getElementById('lobby-start').disabled);
+    ws.send(JSON.stringify({ d: { t: 'ready', on: true } }));
+    if (guest) guest.toHost({ t: 'ready', on: true });
+    await wait(500);
+    check('guests-ready', app.notReady.length === 0 && !document.getElementById('lobby-start').disabled);
+    await shot('05b-host-lobby-ready');
     app.lobbyStart();
     app.closeIntro();
     await wait(600);
@@ -319,9 +370,20 @@ export async function runSmoke(app) {
     g.hurtPlayer(remote, 9999); // downed teammate shows on the minimap
     await wait(300);
     await shot('06-host-game');
+    // off screen, the downed teammate is still pointed out on screen and on the minimap
+    remote.x = Math.min(g.world.W - 4, remote.x + 30);
+    await wait(300);
+    await shot('06b-downed-offscreen');
     app.quitToMenu();
     await wait(300);
     check('client-told-to-lobby', msgs.some((m) => m.t === 'h' && m.d.t === 'toLobby'));
+    check('quit-clears-ready', app.notReady.some((q) => q.name === 'NetBot'));
+    ws.send(JSON.stringify({ d: { t: 'ready', on: true } }));
+    await wait(300);
+    app.selectMap(app.lobby.mapId);
+    ws.send(JSON.stringify({ d: { t: 'char', char: 'volt', level: 4 } }));
+    await wait(300);
+    check('ready-kept-same-pick', !app.notReady.some((q) => q.name === 'NetBot'));
     ws.close();
     await wait(200);
     check('leave-handled', app.lobby.players.length === 1);
@@ -365,5 +427,115 @@ export async function runSmoke(app) {
     report.errors.push('SMOKE EXCEPTION: ' + (e.stack || e));
   }
   if (report.errors.length) report.ok = false;
+  window.native.smokeDone(report);
+}
+
+// Error and crash reporting test (npm run crashtest). Causes real errors and a real crash of the
+// game's page, and checks each is logged in My reports, sent once, and noted on the error popup.
+// Nothing is emailed, unless launched with --crashtest=live: then the first error and the crash
+// report are really sent (two emails).
+export async function runCrashTest(app, live) {
+  app.smoke = true; // the profile isn't saved
+  const KEY = 'dg-crashtest';
+  const sent = [];
+  app.sendStub = async (r, player) => {
+    sent.push({ ...r, player });
+    if (app.offline) throw new Error('offline');
+    if (live && (sent.length === 1 || /crashed/.test(r.text))) await sendReport(r, player);
+  };
+  let stage = null;
+  try {
+    stage = JSON.parse(localStorage.getItem(KEY));
+  } catch {}
+  const report = stage ? stage.report : { ok: true, live: !!live, checks: {} };
+  const check = (k, v) => {
+    report.checks[k] = !!v;
+    if (!v) report.ok = false;
+  };
+  const popup = () => document.getElementById('overlay-error').classList.contains('show');
+  const note = () => document.getElementById('error-logged').textContent;
+  const close = () => {
+    document.getElementById('overlay-error').classList.remove('show');
+    app.errors.length = 0; // the popup only shows the first few errors of a session
+  };
+  const shot = (n) => window.native.smokeShot(n);
+  const settled = async () => {
+    for (let i = 0; i < 100 && /Logging/.test(note()); i++) await wait(200);
+  };
+  if (!stage) {
+    await wait(800);
+    // 1) something in the game throws
+    setTimeout(() => {
+      throw new Error('Simulated test error (crash test)');
+    });
+    await wait(300);
+    await settled();
+    check('error-popup-shown', popup());
+    check('popup-says-logged', /automatically logged and is being investigated/.test(note()));
+    check('error-report-sent', sent.length === 1 && sent[0].auto && /Simulated test error/.test(sent[0].text) && /Where: /.test(sent[0].text));
+    check('in-my-reports', app.profile.bugReports[0] && sent[0] && app.profile.bugReports[0].id === sent[0].id && !app.profile.bugReports[0].pending);
+    report.errorReport = sent[0] && sent[0].text;
+    // the inbox and the dashboard show the subject and the message's first line: both name the error
+    const pay = sent[0] && reportPayload(sent[0], sent[0].player);
+    check('message-starts-with-the-error', sent[0] && sent[0].text.split('\n')[0] === 'Error: Simulated test error (crash test)');
+    check('subject-names-the-error', pay && pay.subject === `Dead Ground error #${sent[0].id}: Error: Simulated test error (crash test)` && pay.error === 'Error: Simulated test error (crash test)');
+    report.subject = pay && pay.subject;
+    report.errorNote = note();
+    await shot('09-error-popup');
+    close();
+    // 2) the same error again is logged once
+    setTimeout(() => {
+      throw new Error('Simulated test error (crash test)');
+    });
+    await wait(500);
+    check('repeat-not-sent-twice', sent.length === 1);
+    close();
+    // 3) a promise nobody handled fails
+    Promise.reject(new Error('Simulated rejection (crash test)'));
+    await wait(600);
+    check('rejection-reported', sent.length === 2 && /Simulated rejection/.test(sent[1].text));
+    close();
+    // 4) offline: the report is kept and goes out once the connection is back
+    app.offline = true;
+    app.reportError(new Error('Simulated offline error (crash test)'));
+    await wait(400);
+    const waiting = app.profile.bugReports.find((r) => /offline error/.test(r.text));
+    check('offline-report-kept', waiting && waiting.pending);
+    check('offline-popup-note', /back online/.test(note()));
+    close();
+    app.offline = false;
+    await app.retryPending();
+    check('sent-once-back-online', waiting && !waiting.pending);
+    // 5) at most AUTO_MAX different errors are sent per session
+    const before = sent.length;
+    app.reportError(new Error('Simulated extra error (crash test)'));
+    await wait(300);
+    check('session-cap', sent.length === before && /automatically logged/.test(note()));
+    close();
+    // 6) automatic reports don't make the player wait to send their own
+    check('own-reports-not-held-up', checkReport('The minimap flickers sometimes.', app.profile.bugReports) === null);
+    // 7) My reports lists them
+    app.show('bugs');
+    await wait(300);
+    check('listed-as-automatic', document.getElementById('bug-list').textContent.includes('automatic error report'));
+    await shot('09b-my-reports');
+    // 8) the game's page really crashes: the window restarts and reports it (continues below)
+    localStorage.setItem(KEY, JSON.stringify({ report }));
+    await wait(300);
+    await window.native.testCrash();
+    return;
+  }
+  // after the restart
+  localStorage.removeItem(KEY);
+  await wait(1000);
+  await settled();
+  const crash = sent.find((r) => /crashed/.test(r.text));
+  check('crash-reported-after-restart', !!crash && crash.auto);
+  check('crash-sent-once', !!crash && sent.filter((r) => r.id === crash.id).length === 1);
+  report.crashSubject = crash && reportPayload(crash, crash.player).subject;
+  check('crash-popup-says-logged', popup() && /automatically logged and is being investigated/.test(note()));
+  report.crashNote = note();
+  report.crashReport = crash && crash.text;
+  await shot('09c-crash-popup');
   window.native.smokeDone(report);
 }

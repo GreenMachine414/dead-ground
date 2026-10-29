@@ -2131,17 +2131,21 @@ export class Renderer {
       c.fillText(t.text, X, Y);
       c.globalAlpha = 1;
     }
-    // bouncing arrows above objective markers + off-screen pointers
+    // bouncing arrows above objective markers + off-screen pointers; downed teammates get the
+    // same guidance with their flashing revive icon (type 4)
     const me = this.me;
     const cw = this.canvas.width, ch = this.canvas.height;
     const marks = snap.O.mk.map((m) => [m[0], m[1], m[2]]);
     if (snap.O.zone) marks.push([snap.O.zone[0], snap.O.zone[1], 3]);
-    for (const [x, z, type] of marks) {
+    for (const o of this.players.values()) if (o.p.s === 1 && o.p.id !== view.localId) marks.push([o.x, o.z, 4, o.p.bl]);
+    const blink = Math.floor(this.time * 4) % 2 === 0;
+    for (const [x, z, type, bleed] of marks) {
       const X = this.sx(x), Y = this.sy(z);
-      const col = type === 2 ? '#ff5a4a' : type === 3 ? '#6ac8ff' : '#ffd65a';
+      const col = type === 4 ? '#ff2a1a' : type === 2 ? '#ff5a4a' : type === 3 ? '#6ac8ff' : '#ffd65a';
       const onScreen = X > u && X < cw - u && Y > u * 2 && Y < ch - u;
       if (onScreen) {
-        if (type !== 2) {
+        if (type === 4) this.reviveIcon(X, Y - u * 3.3 + Math.sin(this.time * 5) * u * 0.18, u * 0.32, blink);
+        else if (type !== 2) {
           const by = Y - u * 2.4 + Math.sin(this.time * 5) * u * 0.18;
           c.beginPath();
           c.moveTo(X - u * 0.3, by - u * 0.3);
@@ -2164,14 +2168,38 @@ export class Renderer {
         c.lineTo(-u * 0.15, 0);
         c.lineTo(-u * 0.3, u * 0.35);
         c.closePath();
-        S.fillStroke(c, col, OUT, u * 0.05);
+        S.fillStroke(c, type === 4 && !blink ? '#ffffff' : col, OUT, u * 0.05);
         c.restore();
         const d = Math.round(Math.hypot(x - me.x, z - me.z));
+        const tx = ex - Math.cos(a) * u * 0.9, ty = ey - Math.sin(a) * u * 0.9;
         c.font = `700 ${fs * 0.9}px Fredoka, Segoe UI`;
         c.fillStyle = col;
-        c.fillText(d + 'm', ex - Math.cos(a) * u * 0.9, ey - Math.sin(a) * u * 0.9);
+        if (type === 4) {
+          // the revive icon beside the arrow, with the distance and the bleed-out countdown
+          this.reviveIcon(tx, ty - u * 0.55, u * 0.3, blink);
+          c.fillStyle = col;
+          c.fillText(`${d}m · ${Math.ceil(bleed)}s`, tx, ty + u * 0.15);
+        } else c.fillText(d + 'm', tx, ty);
       }
     }
+  }
+
+  // the downed-teammate icon, as on the minimap: a pulsing red ring around a flashing cross
+  reviveIcon(X, Y, r, blink) {
+    const c = this.ctx;
+    c.beginPath();
+    c.arc(X, Y, blink ? r * 1.4 : r, 0, Math.PI * 2);
+    c.lineWidth = r * 0.42;
+    c.strokeStyle = '#ff2a1a';
+    c.stroke();
+    c.beginPath();
+    c.rect(X - r * 0.21, Y - r * 0.71, r * 0.42, r * 1.42);
+    c.rect(X - r * 0.71, Y - r * 0.21, r * 1.42, r * 0.42);
+    c.lineWidth = r * 0.28;
+    c.strokeStyle = '#2a1e1a';
+    c.stroke();
+    c.fillStyle = blink ? '#ff2a1a' : '#ffffff';
+    c.fill();
   }
 
   // ---------------------------------------------------------------- events

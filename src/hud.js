@@ -484,7 +484,26 @@ export class Hud {
       g.strokeStyle = '#2a1e1a';
       g.lineWidth = 2;
       g.beginPath();
-      if (edge) {
+      if (edge && m[2] === 4) {
+        // pinned to the edge: the revive icon stays, with an arrow beyond it pointing the way
+        const a = Math.atan2(dz, dx), ix = px - Math.cos(a) * 9, iz = pz - Math.sin(a) * 9;
+        g.moveTo(px + Math.cos(a) * 7, pz + Math.sin(a) * 7);
+        g.lineTo(px + Math.cos(a + 2.2) * 5, pz + Math.sin(a + 2.2) * 5);
+        g.lineTo(px + Math.cos(a - 2.2) * 5, pz + Math.sin(a - 2.2) * 5);
+        g.closePath();
+        g.stroke();
+        g.fill();
+        g.beginPath();
+        g.arc(ix, iz, blink ? 8 : 6, 0, Math.PI * 2);
+        g.lineWidth = 3;
+        g.strokeStyle = '#ff2a1a';
+        g.stroke();
+        g.beginPath();
+        g.rect(ix - 1.5, iz - 4, 3, 8);
+        g.rect(ix - 4, iz - 1.5, 8, 3);
+        g.strokeStyle = '#2a1e1a';
+        g.lineWidth = 2;
+      } else if (edge) {
         const a = Math.atan2(dz, dx);
         g.moveTo(px + Math.cos(a) * 8, pz + Math.sin(a) * 8);
         g.lineTo(px + Math.cos(a + 2.4) * 7, pz + Math.sin(a + 2.4) * 7);

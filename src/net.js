@@ -12,7 +12,7 @@
 import { Peer } from 'peerjs';
 
 export const DEFAULT_PORT = 27015;
-export const PROTOCOL = 3;
+export const PROTOCOL = 4; // 4: lobby ready-up
 const PREFIX = 'deadground-v3-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O or 1/I mix-ups
 const CODE_LEN = 6;

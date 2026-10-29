@@ -277,7 +277,8 @@ export class Session {
     this.hud.handleEvents(events, this.localId);
     this.hud.update(snap, me ? (view.localPos ? { ...me, x: view.localPos.x, z: view.localPos.z } : me) : null, dt, this.input.mouse);
     this.playSounds(events, snap, dt);
-    this.app.audio.setIntensity(snap.BS.some((b) => b[3]) ? 2 : snap.BS.length || (snap.ws === 1 && snap.Z.length > 4) ? 1 : 0);
+    // any boss (or mini-boss) on the map brings in the battle music
+    this.app.audio.setIntensity(snap.BS.length ? 2 : snap.ws === 1 && snap.Z.length > 4 ? 1 : 0);
     this.stats.maxWave = Math.max(this.stats.maxWave, snap.wave);
     if (snap.res && !this.ended) {
       this.ended = true;

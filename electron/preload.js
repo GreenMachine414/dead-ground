@@ -11,5 +11,9 @@ contextBridge.exposeInMainWorld('native', {
   setFullscreen: (on) => ipcRenderer.invoke('app:fullscreen', on),
   args: () => ipcRenderer.invoke('app:args'),
   smokeShot: (name) => ipcRenderer.invoke('smoke:shot', name),
+  trailerSource: () => ipcRenderer.invoke('trailer:source'),
+  takeCrash: () => ipcRenderer.invoke('crash:take'),
+  testCrash: () => ipcRenderer.invoke('crash:test'),
+  trailerSave: (data, ext, name) => ipcRenderer.invoke('trailer:save', data, ext, name),
   smokeDone: (report) => ipcRenderer.invoke('smoke:done', report),
 });

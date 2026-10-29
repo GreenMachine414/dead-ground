@@ -22,6 +22,7 @@ const ZOMBIE_SPEED_CAP = BASE_SPEED * 0.9;
 const WSTAT_CACHE = new WeakMap();
 const STATE_CODE = { alive: 0, down: 1, dead: 2 };
 const BLEED_TIME = 45; // seconds a downed player can wait for a revive
+const FIELD_SLICE = 3000; // path-field cells expanded per tick (a full rebuild takes a few ticks)
 // upgrade machine: price of the nth purchase (per player) is SHOP_COST + n * SHOP_STEP
 const SHOP_COST = 1500, SHOP_STEP = 1000;
 const NO_ARMOR = new Set(['explosive', 'gunblast', 'ability', 'chain']);
@@ -306,12 +307,14 @@ export class Game {
     if (this.instakill > 0) this.instakill -= dt;
     if (this.double > 0) this.double -= dt;
     for (const p of this.players) this.updatePlayer(p, dt);
+    // the zombies' path field is rebuilt 4 times a second, a slice per tick (the first one at once)
     this.fieldT -= dt;
-    if (this.fieldT <= 0) {
+    if (this.fieldT <= 0 && !this.field.busy) {
       this.fieldT = 0.25;
       const src = this.players.filter((p) => p.state === 'alive');
-      if (src.length) this.field.compute(src, this.sgrid);
+      if (src.length) this.field.begin(src, this.sgrid);
     }
+    this.field.run(this.field.ready ? FIELD_SLICE : Infinity);
     this.updateWaves(dt);
     this.updateZombies(dt);
     this.updateProjectiles(dt);

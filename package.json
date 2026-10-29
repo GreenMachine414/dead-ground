@@ -9,9 +9,14 @@
     "build": "node build.js",
     "start": "node build.js && node scripts/run.js",
     "dev": "node build.js && node scripts/run.js --dev",
-    "test": "node build.js && node test/simtest.mjs && node test/bosstest.mjs && node test/featuretest.mjs",
+    "test": "node build.js && node test/simtest.mjs && node test/bosstest.mjs && node test/featuretest.mjs && node test/coopstress.mjs",
     "smoke": "node build.js && node scripts/run.js --smoke",
     "perf": "node build.js && node scripts/run.js --perf",
+    "trailer": "node build.js && node scripts/run.js --trailer",
+    "finale": "node build.js && node scripts/run.js --finale",
+    "stress": "node build.js && node test/coopstress.mjs",
+    "crashtest": "node build.js && node scripts/run.js --crashtest",
+    "stress:live": "node build.js && node scripts/stress.js",
     "dist": "node build.js && electron-builder --win portable nsis"
   },
   "build": {
