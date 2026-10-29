@@ -347,7 +347,7 @@ textarea {
 /* lobby */
 .lobby-grid {
   display: grid;
-  grid-template-columns: 330px 1fr 300px;
+  grid-template-columns: 330px minmax(0, 1fr) 300px;
   gap: 22px;
   flex: 1;
   min-height: 0;
@@ -374,6 +374,12 @@ textarea {
 }
 .tabs button.active {
   background: linear-gradient(#a8e08a, #7cc26a);
+}
+.finale-btn {
+  margin: 4px 4px 0;
+  width: calc(100% - 8px);
+  background: linear-gradient(180deg, #f2c14e, #d9a032);
+  color: var(--edge);
 }
 .map-list {
   display: flex;
@@ -413,8 +419,17 @@ textarea {
 }
 .char-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 1500px) {
+  .screen {
+    padding: 20px 24px;
+  }
+  .lobby-grid {
+    grid-template-columns: 280px minmax(0, 1fr) 250px;
+    gap: 16px;
+  }
 }
 .lobby-upgrade {
   display: flex;
@@ -436,27 +451,38 @@ textarea {
   white-space: nowrap;
 }
 .char-card {
-  padding: 12px 8px;
+  min-width: 0;
+  padding: 10px 4px;
   text-align: center;
   display: flex;
   flex-direction: column;
   gap: 4px;
   align-items: center;
 }
-.char-card .avatar,
-.upg .avatar {
-  width: 62px;
-  height: 62px;
-  border-radius: 50%;
-  border: 3px solid var(--edge);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--display);
-  font-size: 28px;
-  color: #fff;
-  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
-  box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.18);
+.portrait {
+  display: block;
+  width: 64px;
+  max-width: 100%;
+  height: 96px;
+  object-fit: contain;
+  margin: -6px auto -4px;
+  filter: drop-shadow(0 3px 0 rgba(36, 23, 15, 0.18));
+}
+.upg .portrait {
+  align-self: center;
+}
+.lp .ready-tag {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #c9b79a;
+}
+.lp.ready .ready-tag {
+  color: #8fe07a;
+}
+#lobby-start.is-ready {
+  background: linear-gradient(180deg, #8a7a6a, #6a5a4c);
 }
 .char-card .cname {
   font-size: 18px;
@@ -467,6 +493,10 @@ textarea {
   font-weight: 700;
   font-size: 12px;
   color: #6a5440;
+}
+.char-card .crole,
+.char-card .cab {
+  overflow-wrap: anywhere;
 }
 .char-card .cab {
   font-size: 13px;
@@ -680,9 +710,6 @@ select {
   border-radius: 18px;
   box-shadow: 0 6px 0 var(--edge);
 }
-.upg .avatar {
-  align-self: center;
-}
 .upg h3 {
   margin: 0;
   text-align: center;
@@ -889,6 +916,12 @@ select {
 }
 #overlay-error .panel {
   padding: 20px;
+}
+#overlay-error .error-logged {
+  margin: -4px 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #8fe07a;
 }
 #toast {
   position: fixed;
@@ -1669,3 +1702,23 @@ select {
   background: #fff8e8;
   box-shadow: 0 0 0 2px rgba(36, 23, 15, 0.8);
 }
+
+/* ---- end-of-story cutscene (finale.js) ---- */
+#finale { position: fixed; inset: 0; z-index: 80; background: #000; cursor: none; }
+#finale canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#finale .fin-fade { position: absolute; inset: 0; background: #000; opacity: 1; transition: opacity 0.6s ease; pointer-events: none; }
+#finale .fin-where { position: absolute; left: 5%; top: 9%; font-family: var(--display); font-weight: 600; font-size: clamp(16px, 1.6vw, 34px); letter-spacing: 0.08em;
+  color: var(--parch); text-shadow: 0 3px 0 var(--edge), 0 0 18px rgba(0, 0, 0, 0.7); opacity: 0; transform: translateX(-20px); transition: opacity 0.8s ease, transform 1s ease; }
+#finale .fin-skip { position: absolute; right: 3%; bottom: 7%; font-family: var(--display); font-weight: 600; font-size: clamp(12px, 0.9vw, 20px);
+  color: rgba(251, 241, 220, 0.75); text-shadow: 0 2px 0 var(--edge); opacity: 0; transition: opacity 0.6s ease; }
+#finale .fin-card { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.6vh;
+  background: radial-gradient(ellipse at 50% 48%, rgba(20, 12, 8, 0.05), rgba(12, 8, 5, 0.6)); opacity: 0; transform: scale(0.95);
+  transition: opacity 1.2s ease, transform 1.8s cubic-bezier(0.2, 0.8, 0.2, 1); }
+#finale .fin-where.show, #finale .fin-skip.show, #finale .fin-card.show { opacity: 1; transform: none; }
+#finale .fin-card .title { font-size: clamp(64px, 8vw, 170px); }
+#finale .fin-thanks { font-family: var(--display); font-weight: 700; font-size: clamp(28px, 3vw, 64px); color: var(--gold);
+  text-shadow: 3px 0 0 var(--edge), -3px 0 0 var(--edge), 0 3px 0 var(--edge), 0 -3px 0 var(--edge), 0 6px 0 var(--edge), 0 10px 26px rgba(0, 0, 0, 0.6); }
+#finale .fin-more { font-family: var(--display); font-weight: 700; font-size: clamp(22px, 2.2vw, 48px); color: var(--cream); margin-top: 1vh;
+  text-shadow: 0 3px 0 var(--edge), 0 0 24px rgba(0, 0, 0, 0.7); }
+#finale .fin-sub { font-family: var(--display); font-weight: 600; font-size: clamp(15px, 1.3vw, 28px); color: var(--parch); padding: 0.6em 1.6em; border-radius: 40px;
+  background: rgba(36, 23, 15, 0.8); border: 3px solid var(--edge); }

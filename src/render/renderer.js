@@ -11,6 +11,9 @@ import * as S from './sprites.js';
 
 const BASE_U = 42; // css pixels per world unit at zoom 1
 const K = 0.55; // height -> screen offset factor
+// where drawPerson puts the muzzle: the gun pivots 0.64 u above the feet and its barrel ends
+// 0.945 x the weapon's len (+0.1) along the aim
+const MUZZLE_H = 0.64 / K, GUN_TIP = 0.945;
 const MAX_PARTICLES = 1800;
 const TILE = 512; // ground texture is split into tiles this many px square
 // Render resolution budget (device pixels). High-DPI laptop screens otherwise push
@@ -774,13 +777,6 @@ export class Renderer {
       c.strokeStyle = 'rgba(255,214,90,0.85)';
       c.lineWidth = u * 0.08;
       c.stroke();
-      if (m[2] === 1 && m[3] > 0) {
-        c.beginPath();
-        c.ellipse(X, Y, u * 1.15, u * 0.6, 0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, m[3]));
-        c.strokeStyle = '#6fe08a';
-        c.lineWidth = u * 0.14;
-        c.stroke();
-      }
     }
     // player selection rings
     for (const p of this.players.values()) {
@@ -1426,14 +1422,6 @@ export class Renderer {
     }
     const lx = sp.kind === 'body' || sp.kind === 'toolbox' || sp.kind === 'car' ? this.sx(sp.x) : cx;
     if (full) S.drawSparkle(c, lx + u * 0.25, topY - u * 0.25 + Math.sin(t * 3 + i) * u * 0.08, u, t + i, sp.kind === 'chest' ? '#ffd860' : '#fff6c8');
-    if (st[1] > 0) {
-      c.beginPath();
-      c.arc(lx, topY - u * 0.5, u * 0.32, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * st[1]);
-      c.strokeStyle = '#ffe080';
-      c.lineWidth = u * 0.1;
-      c.lineCap = 'round';
-      c.stroke();
-    }
     if (full) this.label(sp.x, sp.z, sp.kind === 'car' ? 1.6 : 2.4, CONTAINERS[sp.kind].name, '#fff2c8', 2.6, undefined, true);
   }
 
@@ -2131,17 +2119,21 @@ export class Renderer {
       c.fillText(t.text, X, Y);
       c.globalAlpha = 1;
     }
-    // bouncing arrows above objective markers + off-screen pointers
+    // bouncing arrows above objective markers + off-screen pointers; downed teammates get the
+    // same guidance with their flashing revive icon (type 4)
     const me = this.me;
     const cw = this.canvas.width, ch = this.canvas.height;
     const marks = snap.O.mk.map((m) => [m[0], m[1], m[2]]);
     if (snap.O.zone) marks.push([snap.O.zone[0], snap.O.zone[1], 3]);
-    for (const [x, z, type] of marks) {
+    for (const o of this.players.values()) if (o.p.s === 1 && o.p.id !== view.localId) marks.push([o.x, o.z, 4, o.p.bl]);
+    const blink = Math.floor(this.time * 4) % 2 === 0;
+    for (const [x, z, type, bleed] of marks) {
       const X = this.sx(x), Y = this.sy(z);
-      const col = type === 2 ? '#ff5a4a' : type === 3 ? '#6ac8ff' : '#ffd65a';
+      const col = type === 4 ? '#ff2a1a' : type === 2 ? '#ff5a4a' : type === 3 ? '#6ac8ff' : '#ffd65a';
       const onScreen = X > u && X < cw - u && Y > u * 2 && Y < ch - u;
       if (onScreen) {
-        if (type !== 2) {
+        if (type === 4) this.reviveIcon(X, Y - u * 3.3 + Math.sin(this.time * 5) * u * 0.18, u * 0.32, blink);
+        else if (type !== 2) {
           const by = Y - u * 2.4 + Math.sin(this.time * 5) * u * 0.18;
           c.beginPath();
           c.moveTo(X - u * 0.3, by - u * 0.3);
@@ -2164,14 +2156,38 @@ export class Renderer {
         c.lineTo(-u * 0.15, 0);
         c.lineTo(-u * 0.3, u * 0.35);
         c.closePath();
-        S.fillStroke(c, col, OUT, u * 0.05);
+        S.fillStroke(c, type === 4 && !blink ? '#ffffff' : col, OUT, u * 0.05);
         c.restore();
         const d = Math.round(Math.hypot(x - me.x, z - me.z));
+        const tx = ex - Math.cos(a) * u * 0.9, ty = ey - Math.sin(a) * u * 0.9;
         c.font = `700 ${fs * 0.9}px Fredoka, Segoe UI`;
         c.fillStyle = col;
-        c.fillText(d + 'm', ex - Math.cos(a) * u * 0.9, ey - Math.sin(a) * u * 0.9);
+        if (type === 4) {
+          // the revive icon beside the arrow, with the distance and the bleed-out countdown
+          this.reviveIcon(tx, ty - u * 0.55, u * 0.3, blink);
+          c.fillStyle = col;
+          c.fillText(`${d}m · ${Math.ceil(bleed)}s`, tx, ty + u * 0.15);
+        } else c.fillText(d + 'm', tx, ty);
       }
     }
+  }
+
+  // the downed-teammate icon, as on the minimap: a pulsing red ring around a flashing cross
+  reviveIcon(X, Y, r, blink) {
+    const c = this.ctx;
+    c.beginPath();
+    c.arc(X, Y, blink ? r * 1.4 : r, 0, Math.PI * 2);
+    c.lineWidth = r * 0.42;
+    c.strokeStyle = '#ff2a1a';
+    c.stroke();
+    c.beginPath();
+    c.rect(X - r * 0.21, Y - r * 0.71, r * 0.42, r * 1.42);
+    c.rect(X - r * 0.71, Y - r * 0.21, r * 1.42, r * 0.42);
+    c.lineWidth = r * 0.28;
+    c.strokeStyle = '#2a1e1a';
+    c.stroke();
+    c.fillStyle = blink ? '#ff2a1a' : '#ffffff';
+    c.fill();
   }
 
   // ---------------------------------------------------------------- events
@@ -2181,7 +2197,13 @@ export class Renderer {
       case 'fire': {
         const w = WEAPONS[WIDS[e.w]];
         const fx = FORGE_FX[e.f];
-        const mx = e.x + Math.cos(e.a) * w.len * 0.7, mz = e.z + Math.sin(e.a) * w.len * 0.7;
+        // the sim fires from where it has the player; the player is drawn smoothed / predicted, so
+        // start the muzzle effects (and this shot's tracers) at the gun tip of the drawn player
+        const o = this.players.get(e.p);
+        const ca = Math.cos(e.a), sa = Math.sin(e.a), D = w.len * GUN_TIP + 0.1;
+        const px = o ? o.x : e.x - ca * 0.6, pz = o ? o.z : e.z - sa * 0.6;
+        const mx = px + ca * D, mz = pz + sa * D;
+        this.shot = { x: e.x, z: e.z, mx, mz };
         if (w.type === 'flame') {
           // Match the sim's damage cone: reach out to the weapon's range (measured from the player,
           // stopping at walls, which also block the damage) across the full hit angle. With drag a
@@ -2191,13 +2213,13 @@ export class Renderer {
           const half = w.spread + 0.15;
           for (let i = 0; i < 4; i++) {
             const a = e.a + (Math.random() * 2 - 1) * half * 0.85, s = (reach / FLAME_REACH) * Math.sqrt(0.2 + Math.random() * 0.8);
-            this.emit(mx, mz, 0.9, Math.cos(a) * s, Math.sin(a) * s, 0.3, Math.random() < 0.4 ? '#ffe070' : fx ? fx.flame : '#ff7a2a', FLAME_LIFE, 0.2, { grow: 2.6, drag: FLAME_DRAG, glow: true });
+            this.emit(mx, mz, MUZZLE_H, Math.cos(a) * s, Math.sin(a) * s, 0.3, Math.random() < 0.4 ? '#ffe070' : fx ? fx.flame : '#ff7a2a', FLAME_LIFE, 0.2, { grow: 2.6, drag: FLAME_DRAG, glow: true });
           }
         } else {
-          this.emit(mx, mz, 0.95, 0, 0, 0, fx ? fx.muzzle : '#fff0b0', 0.06, 0.35, { glow: true });
-          if (w.type !== 'chain') this.emit(e.x, e.z, 0.9, -Math.sin(e.a) * 2, Math.cos(e.a) * 2, 2, '#e0b040', 0.7, 0.06, { g: 12 });
+          this.emit(mx, mz, MUZZLE_H, 0, 0, 0, fx ? fx.muzzle : '#fff0b0', 0.06, 0.35, { glow: true });
+          if (w.type !== 'chain') this.emit(px + ca * 0.3, pz + sa * 0.3, MUZZLE_H, -sa * 2, ca * 2, 2, '#e0b040', 0.7, 0.06, { g: 12 });
           // forged: a couple of sparks kick out of the muzzle
-          if (fx) this.burst(mx, mz, 0.95, 2, fx.dust, 3, 0.3, 0.07, { drag: 4, shape: 'spark' });
+          if (fx) this.burst(mx, mz, MUZZLE_H, 2, fx.dust, 3, 0.3, 0.07, { drag: 4, shape: 'spark' });
         }
         this.flashes.push({ x: mx, z: mz, r: 3, col: fx ? fx.flash : w.type === 'flame' ? '#ff8a3a' : '#ffd890', a: 0.6, life: 0.06, max: 0.06 });
         break;
@@ -2206,7 +2228,8 @@ export class Renderer {
         const fx = FORGE_FX[e.f];
         const col = e.w < 0 ? '#9fdcff' : fx ? fx.tracer : S.hex(WEAPONS[WIDS[e.w]].color);
         const life = e.w < 0 ? 0.05 : 0.08; // turret shots: a quick faint line
-        this.tracers.push({ x1: e.x, z1: e.z, x2: e.x2, z2: e.z2, col, hot: fx && fx.hot, life, max: life });
+        const from = e.w >= 0 && this.shot && this.shot.x === e.x && this.shot.z === e.z ? this.shot : null;
+        this.tracers.push({ x1: from ? from.mx : e.x, z1: from ? from.mz : e.z, x2: e.x2, z2: e.z2, col, hot: fx && fx.hot, life, max: life });
         break;
       }
       case 'soul': {

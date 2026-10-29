@@ -5,6 +5,10 @@ const DIRS = [
   [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
   [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2],
 ];
+// the same directions as flat arrays for the hot loop in compute()
+const DX = Int8Array.from(DIRS, (d) => d[0]);
+const DZ = Int8Array.from(DIRS, (d) => d[1]);
+const DC = Float64Array.from(DIRS, (d) => d[2]);
 const STRUCT_COST = 8;
 // 1-cell gaps (a wall corner next to a prop) only fit small zombies: big ones would wedge there
 // for good, so the field only routes through them when there is no reasonable way round
@@ -14,10 +18,13 @@ export class FlowField {
   constructor(world) {
     this.world = world;
     const n = world.W * world.H;
-    this.dist = new Float32Array(n).fill(Infinity);
+    this.dist = new Float32Array(n).fill(Infinity); // the finished field zombies follow
+    this.next = new Float32Array(n).fill(Infinity); // the one being built (see begin / run)
     this.heapIdx = new Int32Array(n * 4);
     this.heapVal = new Float32Array(n * 4);
     this.size = 0;
+    this.busy = false;
+    this.ready = false; // a field has been finished at least once
   }
 
   push(i, v) {
@@ -34,9 +41,11 @@ export class FlowField {
     hv[k] = v;
   }
 
+  // returns the cell with the smallest distance; its distance is left in this.topVal
   pop() {
     const hi = this.heapIdx, hv = this.heapVal;
     const top = hi[0];
+    this.topVal = hv[0];
     const last = --this.size;
     const li = hi[last], lv = hv[last];
     let k = 0;
@@ -54,38 +63,61 @@ export class FlowField {
     return top;
   }
 
+  // the whole field at once
   compute(sources, sgrid) {
-    const { W, H, grid } = this.world;
-    const dist = this.dist;
-    dist.fill(Infinity);
+    this.begin(sources, sgrid);
+    this.run(Infinity);
+  }
+
+  // Start building a new field. run() advances it a slice at a time, so a rebuild is spread over
+  // a few game ticks instead of stalling one; zombies keep following the last finished field.
+  begin(sources, sgrid) {
+    const { W, H } = this.world;
+    const next = this.next;
+    next.fill(Infinity);
     this.size = 0;
+    this.sgrid = sgrid;
     for (const s of sources) {
       const cx = Math.floor(s.x), cz = Math.floor(s.z);
       if (cx < 0 || cz < 0 || cx >= W || cz >= H) continue;
       const i = cz * W + cx;
-      dist[i] = 0;
+      next[i] = 0;
       this.push(i, 0);
     }
+    this.busy = true;
+  }
+
+  // expand up to `budget` cells; true once the new field is finished and in use
+  run(budget) {
+    if (!this.busy) return true;
+    const { W, H, grid } = this.world;
+    const dist = this.next, sgrid = this.sgrid;
     const cap = this.heapIdx.length - 8;
-    while (this.size > 0) {
+    while (this.size > 0 && budget-- > 0) {
       const i = this.pop();
       const d = dist[i];
+      // a cell is queued again each time its distance improves; skip the outdated copies
+      if (this.topVal > d) continue;
       const cx = i % W, cz = (i / W) | 0;
       for (let k = 0; k < 8; k++) {
-        const dx = DIRS[k][0], dz = DIRS[k][1];
-        const nx = cx + dx, nz = cz + dz;
+        const nx = cx + DX[k], nz = cz + DZ[k];
         if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
         const ni = nz * W + nx;
         if (grid[ni] !== 0) continue;
         if (k >= 4 && (grid[cz * W + nx] !== 0 || grid[nz * W + cx] !== 0)) continue;
         const narrow = (grid[ni - 1] !== 0 && grid[ni + 1] !== 0) || (grid[ni - W] !== 0 && grid[ni + W] !== 0);
-        const nd = d + DIRS[k][2] + (sgrid[ni] !== 0 ? STRUCT_COST : 0) + (narrow ? NARROW_COST : 0);
+        const nd = d + DC[k] + (sgrid[ni] !== 0 ? STRUCT_COST : 0) + (narrow ? NARROW_COST : 0);
         if (nd < dist[ni]) {
           dist[ni] = nd;
           if (this.size < cap) this.push(ni, nd);
         }
       }
     }
+    if (this.size > 0) return false;
+    [this.dist, this.next] = [this.next, this.dist];
+    this.busy = false;
+    this.ready = true;
+    return true;
   }
 
   distAt(x, z) {

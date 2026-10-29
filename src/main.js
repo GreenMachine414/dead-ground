@@ -8,15 +8,18 @@ import { Net, DEFAULT_PORT, PROTOCOL, normalizeCode } from './net.js';
 import { Session } from './session.js';
 import { measureRefresh } from './render/renderer.js';
 import { esc } from './hud.js';
-import { runSmoke } from './smoke.js';
+import { runSmoke, runCrashTest } from './smoke.js';
 import { BINDS, RESERVED, resolveBinds, keyName, normCode } from './keybinds.js';
 import { runPerf } from './perf.js';
+import { runTrailer, recordFinale } from './trailer.js';
+import { runStress } from './stresslive.js';
+import { playFinale, finalePlaying, stopFinale } from './finale.js';
+import { portraitURL } from './render/sprites.js';
 import { MenuBackdrop } from './menubg.js';
-import { BUG_MAX, BUG_KEEP, checkReport, newReportId, sendReport } from './bugreport.js';
+import { BUG_MAX, BUG_KEEP, AUTO_MAX, checkReport, newReportId, sendReport, errorReportText } from './bugreport.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
-const hex = (n) => '#' + n.toString(16).padStart(6, '0');
 
 class App {
   constructor() {
@@ -25,6 +28,7 @@ class App {
     this.session = null;
     this.lobby = null;
     this.errors = [];
+    this.loggedErrors = new Map(); // first line of an error -> the report it was logged as (this session)
   }
 
   async init() {
@@ -33,7 +37,7 @@ class App {
     document.addEventListener('pointerdown', () => {
       this.audio.init();
       this.audio.resume();
-      if (!this.session) this.audio.startMusic('menu');
+      if (!this.session && !finalePlaying()) this.audio.startMusic('menu');
     });
     measureRefresh();
     this.backdrop = new MenuBackdrop(document.getElementById('menu-bg'));
@@ -46,7 +50,8 @@ class App {
     });
     $$('[data-go]').forEach((b) => b.addEventListener('click', () => this.go(b.dataset.go)));
     $$('#mode-tabs button').forEach((b) => b.addEventListener('click', () => this.setMode(b.dataset.mode)));
-    $('#lobby-start').addEventListener('click', () => this.lobbyStart());
+    $('#lobby-start').addEventListener('click', () => (this.lobby && this.lobby.kind === 'client' ? this.toggleReady() : this.lobbyStart()));
+    $('#watch-finale').addEventListener('click', () => this.watchFinale());
     $('#join-go').addEventListener('click', () => this.joinGame());
     $('#join-ip-go').addEventListener('click', () => this.joinGame(true));
     $('#join-code').addEventListener('input', (e) => (e.target.value = normalizeCode(e.target.value)));
@@ -66,6 +71,13 @@ class App {
     const args = window.native ? await window.native.args() : {};
     if (args.smoke) runSmoke(this);
     if (args.perf) runPerf(this, { vector: args.vector });
+    if (args.crashtest) runCrashTest(this, args.crashtest === 'live');
+    if (args.stress) runStress(this, args.stress);
+    else if (args.finale) recordFinale(this);
+    else if (args.trailer) runTrailer(this);
+    const crash = window.native && (await window.native.takeCrash());
+    if (crash) this.reportError(`${crash.kind} (${crash.reason}${crash.exitCode !== undefined ? ', exit code ' + crash.exitCode : ''}) and restarted.${crash.detail ? '\n' + crash.detail : ''}`, 'Crash');
+    this.retryPending();
   }
 
   // ---------------------------------------------------------------- navigation
@@ -73,7 +85,7 @@ class App {
     $$('.screen').forEach((s) => s.classList.toggle('active', s.id === 'screen-' + name));
     this.screen = name;
     if (this.keyListen) this.keyListen();
-    if (!this.session) {
+    if (!this.session && !finalePlaying()) {
       this.audio.startMusic('menu');
       if (this.backdrop) this.backdrop.start();
     }
@@ -126,12 +138,82 @@ class App {
     this.toastT = setTimeout(() => t.classList.remove('show'), 2500);
   }
 
-  reportError(err) {
+  reportError(err, kind = 'Error') {
     const msg = (err && (err.stack || err.message)) || String(err);
     this.errors.push(msg);
     if (this.errors.length > 3) return;
     $('#error-text').textContent = msg;
+    const note = $('#error-logged');
+    note.textContent = 'Logging this error…';
     $('#overlay-error').classList.add('show');
+    this.logError(msg, kind)
+      .then((res) => {
+        note.textContent =
+          res.status === 'pending'
+            ? "This error was automatically logged and will be sent for investigation as soon as you're back online."
+            : 'This error was automatically logged and is being investigated.';
+        if (res.id) note.textContent += ` (report #${res.id})`;
+      })
+      .catch(() => (note.textContent = ''));
+  }
+
+  // where the player was when something went wrong, for the error report
+  errorWhere() {
+    const s = this.session;
+    if (!s) return `${this.screen} screen`;
+    const snap = s.snap;
+    return `in game: ${s.map.name}, ${s.opts.mode}, ${s.role}, ${snap ? snap.P.length : '?'} players, round ${snap ? snap.wave : '?'}`;
+  }
+
+  // Saves an error as a bug report ("My reports" lists it) and sends it. Repeats of the same error
+  // are logged once, and at most AUTO_MAX per session; one that can't be sent waits for next launch.
+  async logError(msg, kind) {
+    const sig = String(msg).split('\n')[0].slice(0, 200);
+    if (this.loggedErrors.has(sig)) return { status: 'logged', id: this.loggedErrors.get(sig) };
+    if (this.loggedErrors.size >= AUTO_MAX) return { status: 'logged' };
+    const r = { id: newReportId(), text: errorReportText(kind, msg, this.errorWhere()), edits: 0, auto: true, pending: true, sent: Date.now() };
+    this.loggedErrors.set(sig, r.id);
+    this.profile.bugReports = [r, ...this.profile.bugReports].slice(0, BUG_KEEP);
+    this.save();
+    try {
+      await this.deliver(r);
+      r.pending = false;
+      this.save();
+      return { status: 'sent', id: r.id };
+    } catch (e) {
+      console.warn('error report not sent yet', e);
+      return { status: 'pending', id: r.id };
+    } finally {
+      if (this.screen === 'bugs') this.renderBugs();
+    }
+  }
+
+  // send a report: tests can swap the sender (sendStub); smoke runs never email otherwise
+  async deliver(r) {
+    this.sending = this.sending || new Set(); // reports on their way right now (never sent twice)
+    this.sending.add(r.id);
+    try {
+      if (this.sendStub) return await this.sendStub(r, this.profile.name);
+      if (this.smoke) return;
+      return await sendReport(r, this.profile.name);
+    } finally {
+      this.sending.delete(r.id);
+    }
+  }
+
+  // error reports that couldn't be sent last time (offline) go out now; one already on its way
+  // (a crash being reported as the game starts) is left to finish
+  async retryPending() {
+    const waiting = this.profile.bugReports.filter((r) => r.auto && r.pending && !(this.sending && this.sending.has(r.id)));
+    for (const r of waiting) {
+      try {
+        await this.deliver(r);
+        r.pending = false;
+      } catch {
+        return; // still offline: try again next launch
+      }
+    }
+    if (waiting.length) this.save();
   }
 
   renderMain() {
@@ -262,7 +344,7 @@ class App {
           .map((r) => {
             const when = new Date(r.sent).toLocaleDateString();
             const snip = r.text.length > 140 ? r.text.slice(0, 140) + '…' : r.text;
-            return `<div class="bug-item${r.id === this.bugEditing ? ' editing' : ''}"><div class="bug-meta">#${r.id} · ${when}${r.edits ? ` · edited ${r.edits}×` : ''}</div><button data-edit="${r.id}">Edit</button><div class="bug-snip">${esc(snip)}</div></div>`;
+            return `<div class="bug-item${r.id === this.bugEditing ? ' editing' : ''}"><div class="bug-meta">#${r.id} · ${when}${r.auto ? ' · automatic error report' : ''}${r.pending ? ' · waiting to send' : ''}${r.edits ? ` · edited ${r.edits}×` : ''}</div><button data-edit="${r.id}">Edit</button><div class="bug-snip">${esc(snip)}</div></div>`;
           })
           .join('')
       : '<p class="hint">Reports you send show up here so you can edit them later.</p>';
@@ -309,7 +391,7 @@ class App {
     $('#bug-send').disabled = true;
     this.bugStatus('Sending…', true);
     try {
-      if (!this.smoke) await sendReport(r, this.profile.name); // smoke runs never send email
+      await this.deliver(r);
     } catch (e) {
       console.warn('bug report failed', e);
       return this.bugStatus("Couldn't send the report. Check your internet connection and try again.");
@@ -318,6 +400,7 @@ class App {
       $('#bug-send').disabled = false;
     }
     r.sent = Date.now();
+    r.pending = false;
     this.profile.bugReports = [r, ...reports.filter((q) => q.id !== r.id)].slice(0, BUG_KEEP);
     this.save();
     this.editBug(null);
@@ -350,7 +433,7 @@ class App {
       const lvl = p.levels[id];
       const cost = upgradeCost(lvl);
       return `<div class="upg panel">
-        <div class="avatar" style="background:${hex(c.color)}"></div>
+        <img class="portrait" src="${portraitURL(id)}" alt="${c.name}">
         <h3>${c.name}</h3><div class="role">${c.role}</div>
         <div class="ab">${c.ability} — Level ${lvl}/${MAX_LEVEL}</div>
         <div class="desc">${c.desc}</div>
@@ -453,6 +536,7 @@ class App {
   }
 
   leaveLobby() {
+    if (this.session) this.endSession(); // never leave a game running in the background
     if (this.net) {
       this.net.close();
       this.net = null;
@@ -477,8 +561,9 @@ class App {
   }
 
   setMode(mode) {
-    if (!this.lobby || this.lobby.kind === 'client') return;
+    if (!this.lobby || this.lobby.kind === 'client' || this.lobby.mode === mode) return;
     this.lobby.mode = mode;
+    this.clearReady();
     this.broadcastLobby();
     this.renderLobby();
   }
@@ -486,7 +571,9 @@ class App {
   selectMap(id) {
     if (!this.lobby || this.lobby.kind === 'client') return;
     if (id > this.lobby.unlocked) return this.toast('Beat the previous map to unlock this one.');
+    if (id === this.lobby.mapId) return;
     this.lobby.mapId = id;
+    this.clearReady();
     this.broadcastLobby();
     this.renderLobby();
   }
@@ -497,7 +584,7 @@ class App {
     this.save();
     const level = p.levels[id];
     if (this.lobby.kind === 'client') {
-      this.net.toHost({ t: 'char', char: id, level });
+      this.net.toHost({ t: 'char', char: id, level }); // the host un-readies us: a new pick needs a new ready
     } else {
       const me = this.lobby.players.find((q) => q.id === 0);
       me.char = id;
@@ -506,6 +593,23 @@ class App {
       this.broadcastLobby();
     }
     this.renderLobby();
+  }
+
+  // guests only: tell the host we're ready (or not)
+  toggleReady() {
+    const me = this.lobby.players.find((q) => q.id === this.myLobbyId);
+    if (me) this.net.toHost({ t: 'ready', on: !me.ready });
+  }
+
+  // host: the guests still to ready up (the host readies by pressing Start)
+  get notReady() {
+    // only a hosted co-op lobby waits; the host is always player 0
+    return this.lobby && this.lobby.kind === 'host' ? this.lobby.players.filter((q) => q.id !== 0 && !q.ready) : [];
+  }
+
+  // host: a change everyone should see before starting (map, mode, back from a game) clears ready
+  clearReady() {
+    if (this.lobby) for (const q of this.lobby.players) q.ready = false;
   }
 
   broadcastLobby() {
@@ -535,6 +639,8 @@ class App {
       </button>`;
     }).join('');
     $$('[data-map]').forEach((b) => b.addEventListener('click', () => this.selectMap(+b.dataset.map)));
+    // the finale cutscene can be rewatched once Ground Zero's story is beaten
+    $('#watch-finale').hidden = !this.profile.completed.includes(5);
     // map detail
     const m = getMap(L.mapId);
     const zeds = m.zombies.map((z) => ZOMBIES[z.type].name);
@@ -550,7 +656,7 @@ class App {
     $('#char-pick').innerHTML = CHARACTER_IDS.map((id) => {
       const c = CHARACTERS[id];
       return `<button class="char-card ${id === myChar ? 'selected' : ''}" data-char="${id}">
-        <div class="avatar" style="background:${hex(c.color)}">${c.name[0]}</div>
+        <img class="portrait" src="${portraitURL(id)}" alt="${c.name}">
         <div class="cname">${c.name}</div><div class="crole">${c.role}</div>
         <div class="cab">${c.ability}</div><div class="clvl">Level ${this.profile.levels[id]}/${MAX_LEVEL}</div>
       </button>`;
@@ -568,7 +674,9 @@ class App {
       this.renderLobby();
     });
     // players
-    $('#lobby-players').innerHTML = L.players.map((p) => `<div class="lp"><div><b>${esc(p.name)}</b>${p.host ? '<span class="host-tag">HOST</span>' : ''}
+    const solo = L.kind === 'solo';
+    $('#lobby-players').innerHTML = L.players.map((p) => `<div class="lp ${p.ready ? 'ready' : ''}"><div><b>${esc(p.name)}</b>${p.host ? '<span class="host-tag">HOST</span>' : ''}
+        ${solo || p.host ? '' : `<span class="ready-tag">${p.ready ? '✔ READY' : 'NOT READY'}</span>`}
         <div class="lp-char">${CHARACTERS[p.char].name} · ${CHARACTERS[p.char].ability} Lv ${p.level}</div></div></div>`).join('');
     const net = $('#lobby-net');
     if (L.kind === 'host') {
@@ -580,11 +688,14 @@ class App {
       if (cb) cb.addEventListener('click', () => this.copyCode());
     } else net.innerHTML = '';
     const start = $('#lobby-start');
-    start.style.display = isClient ? 'none' : '';
+    const meReady = !!(me && me.ready), waiting = L.kind === 'host' ? this.notReady.length : 0;
+    start.textContent = isClient ? (meReady ? 'Not Ready' : 'Ready Up') : waiting ? `Waiting for ${waiting} to ready up` : 'Start';
+    start.disabled = waiting > 0;
+    start.classList.toggle('is-ready', meReady);
     $('#lobby-hint').textContent = isClient
-      ? 'Waiting for the host to start the game...'
+      ? meReady ? 'Ready! Waiting for the host to start the game...' : 'Pick your survivor, then Ready Up.'
       : L.kind === 'host'
-        ? `${L.players.length}/4 survivors. More players = more zombies, tougher zombies.`
+        ? `${L.players.length}/4 survivors. More players = more zombies, tougher zombies.${L.players.length > 1 ? ' Everyone has to ready up before you can start.' : ''}`
         : '';
   }
 
@@ -618,8 +729,16 @@ class App {
       if (d.t === 'char' && L && !this.session) {
         const p = L.players.find((q) => q.id === msg.from);
         if (p && CHARACTERS[d.char]) {
+          if (p.char !== d.char) p.ready = false;
           p.char = d.char;
           p.level = Math.max(1, Math.min(5, d.level | 0 || 1));
+          this.broadcastLobby();
+          this.renderLobby();
+        }
+      } else if (d.t === 'ready' && L && !this.session) {
+        const p = L.players.find((q) => q.id === msg.from);
+        if (p) {
+          p.ready = !!d.on;
           this.broadcastLobby();
           this.renderLobby();
         }
@@ -649,6 +768,7 @@ class App {
   lobbyStart() {
     const L = this.lobby;
     if (!L || L.kind === 'client') return;
+    if (this.notReady.length) return this.toast('Waiting for ' + this.notReady.map((q) => q.name).join(', ') + ' to ready up.');
     const seed = (Math.random() * 1e9) | 0;
     const players = L.players.map((p) => ({ id: p.id, name: p.name, char: p.char, level: p.level }));
     const opts = { mapId: L.mapId, mode: L.mode, seed, players, unlockedMap: L.unlocked };
@@ -658,6 +778,7 @@ class App {
 
   // ---------------------------------------------------------------- session
   startSession(opts) {
+    stopFinale();
     this.audio.init();
     this.hideScreens();
     this.backdrop.stop();
@@ -707,6 +828,8 @@ class App {
     const role = this.session && this.session.role;
     this.endSession();
     if (role === 'host') {
+      this.clearReady();
+      this.broadcastLobby();
       this.net.toClients({ t: 'toLobby' });
       this.show('lobby');
       this.renderLobby();
@@ -717,8 +840,27 @@ class App {
     }
   }
 
+  // replay the end-of-story cutscene from the lobby, with the survivors picked there (yours first)
+  get finalePlaying() {
+    return finalePlaying();
+  }
+
+  async watchFinale() {
+    if (finalePlaying() || !this.profile.completed.includes(5)) return;
+    const team = this.lobby ? this.lobby.players : [], id = this.myLobbyId;
+    // a guest watching isn't ready: the host can't start a game they can't see
+    const me = team.find((q) => q.id === id);
+    if (this.lobby && this.lobby.kind === 'client' && me && me.ready) this.net.toHost({ t: 'ready', on: false });
+    this.backdrop.stop();
+    await playFinale(this, [...team.filter((q) => q.id === id), ...team.filter((q) => q.id !== id)].map((q) => q.char));
+    if (!this.session) {
+      this.audio.startMusic('menu');
+      this.backdrop.start();
+    }
+  }
+
   // ---------------------------------------------------------------- end of game
-  onGameEnd(session, snap) {
+  async onGameEnd(session, snap) {
     if (this.session !== session) return;
     const win = snap.res === 'win';
     const m = session.map;
@@ -746,6 +888,15 @@ class App {
 
     $('#overlay-pause').classList.remove('show');
     this.endSession();
+    if (win && mode === 'story' && m.id === 5 && !this.smoke) {
+      // the getaway cutscene, with this team's survivors (yours first)
+      const screen = this.screen;
+      await playFinale(this, [me, ...snap.P.filter((q) => q !== me)].filter(Boolean).map((q) => q.c));
+      if (this.session) return; // the host started the next game meanwhile
+      // the host sent everyone to the lobby meanwhile: show it again now, so its music and
+      // backdrop (held back during the cutscene) come back
+      if (this.screen !== screen) return this.show(this.screen);
+    }
     const title = $('#end-title');
     title.className = win ? 'win' : 'lose';
     title.textContent = win ? (m.id === 5 ? 'YOU SURVIVED' : 'ESCAPED!') : mode === 'endless' ? `SURVIVED ${snap.wave} ROUNDS` : 'YOU DIED';
@@ -769,7 +920,8 @@ class App {
           this.toLobby();
         }]);
       }
-      buttons.push([win ? 'Play Again' : 'Retry', () => {
+      const guests = this.lobby && this.lobby.players.length > 1;
+      if (!guests) buttons.push([win ? 'Play Again' : 'Retry', () => {
         this.lobby.unlocked = Math.max(this.lobby.unlocked, p.unlocked);
         this.toLobby();
         this.lobbyStart();
@@ -791,6 +943,7 @@ class App {
 
   toLobby() {
     if (this.lobby.kind === 'host') {
+      this.clearReady(); // everyone readies up again for the next game
       this.lobby.unlocked = Math.max(this.lobby.unlocked, this.profile.unlocked);
       this.net.toClients({ t: 'toLobby' });
       this.broadcastLobby();

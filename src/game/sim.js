@@ -22,6 +22,7 @@ const ZOMBIE_SPEED_CAP = BASE_SPEED * 0.9;
 const WSTAT_CACHE = new WeakMap();
 const STATE_CODE = { alive: 0, down: 1, dead: 2 };
 const BLEED_TIME = 45; // seconds a downed player can wait for a revive
+const FIELD_SLICE = 3000; // path-field cells expanded per tick (a full rebuild takes a few ticks)
 // upgrade machine: price of the nth purchase (per player) is SHOP_COST + n * SHOP_STEP
 const SHOP_COST = 1500, SHOP_STEP = 1000;
 const NO_ARMOR = new Set(['explosive', 'gunblast', 'ability', 'chain']);
@@ -306,12 +307,14 @@ export class Game {
     if (this.instakill > 0) this.instakill -= dt;
     if (this.double > 0) this.double -= dt;
     for (const p of this.players) this.updatePlayer(p, dt);
+    // the zombies' path field is rebuilt 4 times a second, a slice per tick (the first one at once)
     this.fieldT -= dt;
-    if (this.fieldT <= 0) {
+    if (this.fieldT <= 0 && !this.field.busy) {
       this.fieldT = 0.25;
       const src = this.players.filter((p) => p.state === 'alive');
-      if (src.length) this.field.compute(src, this.sgrid);
+      if (src.length) this.field.begin(src, this.sgrid);
     }
+    this.field.run(this.field.ready ? FIELD_SLICE : Infinity);
     this.updateWaves(dt);
     this.updateZombies(dt);
     this.updateProjectiles(dt);
@@ -644,7 +647,7 @@ export class Game {
       if (q === p || z.boss || z.mini) this.gainXp(q, xp);
       else this.gainXp(q, Math.round(xp * 0.25));
     }
-    if (z.def.explode) this.explode(z.x, z.z, z.def.explode.radius, z.def.explode.damage, { enemy: true });
+    if (z.def.explode) this.explode(z.x, z.z, z.def.explode.radius, z.def.explode.damage * z.dm, { enemy: true });
     if (z.boss || z.mini) {
       this.lastBossPos = { x: z.x, z: z.z };
       for (const q of this.players) if (q !== p) this.givePoints(q, z.boss ? 1000 : 400);
@@ -933,11 +936,14 @@ export class Game {
     p.interact = target;
     p.prompt = target ? target.text : '';
     p.promptProg = -1;
+    p.promptRate = 0;
     if (!target) return;
     if (target.hold) {
       if (held) {
+        const before = target.prog();
         target.progress(dt);
         p.promptProg = target.prog();
+        p.promptRate = Math.max(0, (p.promptProg - before) / dt);
       } else if (target.release) {
         target.release();
       }
@@ -1557,12 +1563,14 @@ export class Game {
     } else {
       hp = def.hp * (1 + 0.16 * (this.wave - 1)) * (1 + 0.35 * (n - 1));
     }
+    // damage: +4% a round, up to double by round 26
+    const dm = def.fixedHp ? 1 : 1 + Math.min(1, 0.04 * (this.wave - 1));
     const speed = def.fixedHp
       ? def.speed
       : Math.min(ZOMBIE_SPEED_CAP, def.speed * (0.9 + this.rng() * 0.2) * (1 + Math.min(0.45, 0.025 * (this.wave - 1))));
     const zb = {
       id: this.nextId++, type, def, x, z, r: def.radius, cr: Math.min(def.radius, 0.45), ang: this.rng() * Math.PI * 2,
-      hp, maxHp: hp, speed, damage: def.damage,
+      hp, maxHp: hp, speed, damage: def.damage * dm, dm,
       state: rise ? 'rise' : 'move', t: rise ? (def.boss || def.miniboss ? 2.4 : 1.4) : 0,
       atkCd: 0.5, cds: {}, boss: !!def.boss, mini: !!def.miniboss,
       burn: 0, stun: 0, buff: 0, losT: 0, los: false, target: null, targetT: 0, specialCd: 1 + this.rng() * 2,
@@ -1668,7 +1676,7 @@ export class Game {
           if (dist < reach + (big ? 0.5 : 0.8) && !wall) {
             if (z.def.ignite && tgt.invuln <= 0) {
               tgt.burnT = z.def.ignite.time;
-              tgt.burnDps = z.def.ignite.dps;
+              tgt.burnDps = z.def.ignite.dps * z.dm;
             }
             this.hurtPlayer(tgt, z.damage);
             if (tgt.boons.thorns) this.damageZombie(z, 60 * tgt.boons.thorns * (1 + 0.15 * (this.wave - 1)), tgt.id, 'spikes');
@@ -1720,7 +1728,7 @@ export class Game {
         z.trailT -= dt;
         if (z.trailT <= 0) {
           z.trailT = 0.5;
-          this.hazards.push({ id: this.nextId++, kind: 'fire', x: z.x, z: z.z, r: 1.1, t: 3, dps: 14 });
+          this.hazards.push({ id: this.nextId++, kind: 'fire', x: z.x, z: z.z, r: 1.1, t: 3, dps: 14 * z.dm });
         }
       }
     }
@@ -1810,7 +1818,7 @@ export class Game {
         z.state = 'move';
         if (z.pending === 'spit') {
           const a = Math.atan2(tgt.z - z.z, tgt.x - z.x);
-          this.projs.push({ id: this.nextId++, kind: 'spit', owner: 'z', x: z.x, y: 1.2, z: z.z, vx: Math.cos(a) * 12, vy: 0, vz: Math.sin(a) * 12, g: 0, dmg: def.spit.damage, life: 1.4, r: 0.3 });
+          this.projs.push({ id: this.nextId++, kind: 'spit', owner: 'z', x: z.x, y: 1.2, z: z.z, vx: Math.cos(a) * 12, vy: 0, vz: Math.sin(a) * 12, g: 0, dmg: def.spit.damage * z.dm, life: 1.4, r: 0.3 });
           this.emit({ k: 'sfx', s: 'spit', x: z.x, z: z.z });
         } else if (z.pending === 'leap') {
           const a = Math.atan2(tgt.z - z.z, tgt.x - z.x);
@@ -2614,7 +2622,7 @@ export class Game {
         s: STATE_CODE[p.state], w: p.weapons.map((w) => (w ? [w.id, w.forged || 0, w.mag, w.reserve, w.rarity || 0, this.wstat(p, w).mag, w.fkills || 0] : null)), cw: p.cur,
         xp: p.xp, xpn: xpForLevel(p.rank), rk: p.rank, chs: p.choices[0] || null, nch: p.choices.length, bo: p.boons,
         pts: p.points, k: p.kills, cd: r2(p.abilityCd), cdm: p.abilityMax || 1, ch: p.charges, chm: p.maxCharges, g: p.grenades,
-        pk: Object.keys(p.perks), rl: p.reloadT > 0 ? r2(1 - p.reloadT / p.reloadMax) : -1, pr: p.prompt, pp: r2(p.promptProg),
+        pk: Object.keys(p.perks), rl: p.reloadT > 0 ? r2(1 - p.reloadT / p.reloadMax) : -1, pr: p.prompt, pp: r2(p.promptProg), ps: r2(p.promptRate || 0), rs: p.reloadT > 0 ? r2(1 / p.reloadMax) : 0,
         bl: r2(p.bleed), rv: r2(p.revive), iv: p.invuln > 0 ? 1 : 0, mv: p.moving ? 1 : 0,
         tp: p.tp, er: p.earned, dn: p.downs, rvs: p.revives, sh: Math.ceil(p.shield), bn: p.burnT > 0 ? 1 : 0,
       })),
