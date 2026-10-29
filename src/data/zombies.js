@@ -110,6 +110,6 @@ export const POWERUPS = {
 export const PERKS = {
   tough: { name: 'Tough Brew', cost: 2500, desc: 'Max health 100 → 200', color: 0xd03030 },
   quick: { name: 'Quick Hands', cost: 3000, desc: 'Reload 50% faster', color: 0x30a0d0 },
-  swift: { name: 'Swift Step', cost: 2000, desc: 'Move 15% faster, sprint longer', color: 0x40d070 },
+  swift: { name: 'Swift Step', cost: 2000, desc: 'Move 15% faster', color: 0x40d070 },
   rapid: { name: 'Double Tap', cost: 2000, desc: 'Fire rate +33%', color: 0xe0b030 },
 };

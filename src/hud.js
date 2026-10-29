@@ -26,7 +26,6 @@ export class Hud {
       <div class="player card">
         <div class="pts-row"><span class="coin">●</span><span class="pts"></span><span class="pts-pop"></span></div>
         <div class="bar hp"><div class="fill"></div><span></span></div>
-        <div class="bar stam"><div class="fill"></div></div>
         <div class="row2">
           <div class="ability"><div class="ab-cd"></div><div class="ab-key">F</div><div class="ab-charges"></div></div>
           <div class="ab-info"><div class="ab-name"></div><div class="ab-state"></div></div>
@@ -50,7 +49,7 @@ export class Hud {
       bosses: q('.bosses'), powerups: q('.powerups'), team: q('.team'),
       msg: q('.msg'), msgMain: q('.msg-main'), msgSub: q('.msg-sub'), notes: q('.notes'),
       prompt: q('.prompt'), promptText: q('.prompt-text'), promptBar: q('.prompt-bar'), promptFill: q('.prompt-bar div'),
-      pts: q('.pts'), ptsPop: q('.pts-pop'), hpFill: q('.hp .fill'), hpText: q('.hp span'), stam: q('.stam .fill'),
+      pts: q('.pts'), ptsPop: q('.pts-pop'), hpFill: q('.hp .fill'), hpText: q('.hp span'),
       abCd: q('.ab-cd'), abCharges: q('.ab-charges'), abName: q('.ab-name'), abState: q('.ab-state'), ability: q('.ability'),
       grenades: q('.grenades'), perks: q('.perks'), wIcon: q('.w-icon'), wRarity: q('.w-rarity'), wName: q('.w-name'),
       mag: q('.mag'), res: q('.res'), wAlt: q('.w-alt'), reload: q('.w-reload'), reloadFill: q('.w-reload .fill'),
@@ -318,7 +317,6 @@ export class Hud {
     el.hpFill.style.width = hpf * 100 + '%';
     el.hpFill.classList.toggle('low', hpf < 0.35);
     this.set('hpt', el.hpText, `${Math.max(0, me.hp)} / ${me.mh}${me.sh > 0 ? ' +' + me.sh + ' ⛨' : ''}`);
-    el.stam.style.width = me.st * 100 + '%';
     const ch = CHARACTERS[me.c];
     this.set('abn', el.abName, `${ch.ability} · Lv ${me.l}`);
     const ready = me.c === 'brick' ? me.ch > 0 : me.cd <= 0;

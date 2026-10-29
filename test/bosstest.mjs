@@ -31,7 +31,7 @@ for (const [mapId, type, signature] of BOSSES) {
         // shuffle around near the boss at varying ranges
         const want = 3 + 10 * (0.5 + 0.5 * Math.sin(i / 200 + p.id));
         const dx = p.x - boss.x, dz = p.z - boss.z, d = Math.hypot(dx, dz) || 1;
-        game.setInput(p.id, { mx: ((want - d) * dx) / d, mz: ((want - d) * dz) / d, ax: boss.x, az: boss.z, fire: false, sprint: false, use: false, acts: {} });
+        game.setInput(p.id, { mx: ((want - d) * dx) / d, mz: ((want - d) * dz) / d, ax: boss.x, az: boss.z, fire: false, use: false, acts: {} });
       }
       if (i === 1800) boss.hp = boss.maxHp * 0.4; // let the enrage / heal paths run
       game.update(DT);

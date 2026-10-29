@@ -93,6 +93,13 @@ export class Renderer {
     this.textW = new Map();
     this.forgeDetailFn = () => this.forgeDetail(); // bound once, passed to machineLabel each frame
     this.glowSprites = new Map();
+    // the previous snapshot's entities by id, for drawing between snapshots
+    this.prevP = new Map();
+    this.prevZ = new Map();
+    this.prevR = new Map();
+    this.prevH = new Map();
+    this.alpha = 1;
+    this.dt = 0;
     this.shake = 0;
     this.shakeEnabled = true;
     this.cam = { x: 0, z: 0 };
@@ -341,9 +348,11 @@ export class Renderer {
   // ---------------------------------------------------------------- frame
   update(snap, events, dt, view) {
     this.time += dt;
+    this.dt = dt;
     this.frameNo++;
     this.adaptQuality(dt);
     this.snap = snap;
+    this.prepInterp(view);
     const k = view.smooth ? 1 - Math.exp(-dt * 14) : 1;
     this.syncPlayers(snap, dt, k, view);
     this.syncZombies(snap, dt, k);
@@ -374,6 +383,24 @@ export class Renderer {
     this.cam = camSave;
   }
 
+  // host / solo: everything is drawn alpha of the way from the previous sim step to the latest;
+  // clients smooth players and zombies themselves and only interpolate projectiles and hazards
+  prepInterp(view) {
+    const prev = view.prev;
+    this.alpha = prev ? Math.max(0, Math.min(1, view.alpha)) : 1;
+    this.lerpAll = !!prev && !view.smooth;
+    if (!prev || prev === this.prevRef) return;
+    this.prevRef = prev;
+    this.prevP.clear();
+    for (const p of prev.P) this.prevP.set(p.id, p);
+    this.prevZ.clear();
+    for (const z of prev.Z) this.prevZ.set(z[0], z);
+    this.prevR.clear();
+    for (const r of prev.R) this.prevR.set(r[0], r);
+    this.prevH.clear();
+    for (const h of prev.H) this.prevH.set(h[0], h);
+  }
+
   syncPlayers(snap, dt, k, view) {
     const seen = new Set();
     for (const p of snap.P) {
@@ -384,7 +411,12 @@ export class Renderer {
         this.players.set(p.id, o);
       }
       const local = p.id === view.localId && view.localPos;
-      const tx = local ? view.localPos.x : p.x, tz = local ? view.localPos.z : p.z;
+      let tx = local ? view.localPos.x : p.x, tz = local ? view.localPos.z : p.z;
+      const q = this.lerpAll && this.prevP.get(p.id);
+      if (q && q.tp === p.tp) {
+        tx = q.x + (p.x - q.x) * this.alpha;
+        tz = q.z + (p.z - q.z) * this.alpha;
+      }
       const kk = local ? 1 : k;
       const ox = o.x, oz = o.z;
       o.x += (tx - o.x) * kk;
@@ -402,7 +434,13 @@ export class Renderer {
   syncZombies(snap, dt, k) {
     const seen = new Set();
     for (const z of snap.Z) {
-      const [id, ti, x, zz, a, hp, st, riseT, flags] = z;
+      const [id, ti, , , a, hp, st, riseT, flags] = z;
+      let x = z[2], zz = z[3];
+      const q = this.lerpAll && this.prevZ.get(id);
+      if (q) {
+        x = q[2] + (x - q[2]) * this.alpha;
+        zz = q[3] + (zz - q[3]) * this.alpha;
+      }
       seen.add(id);
       let o = this.zombies.get(id);
       if (!o) {
@@ -577,6 +615,7 @@ export class Renderer {
       }
     }
     this.drawProjectiles(snap);
+    if (snap.O.dr) this.drawDrone(snap.O.dr[0], snap.O.dr[1]);
     this.drawEffects();
     this.drawLighting(snap, view);
     this.drawOverlayUI(snap, view);
@@ -659,7 +698,8 @@ export class Renderer {
     const c = this.ctx, u = this.u;
     this.drawDecals();
     // hazards
-    for (const [, kind, x, z, r, t] of snap.H) {
+    for (const h of snap.H) {
+      const [, kind, x, z, r, t] = this.hazardPos(h);
       const X = this.sx(x), Y = this.sy(z), R = r * u;
       const fade = Math.min(1, t * 2);
       if (kind === 'ring') {
@@ -1660,7 +1700,7 @@ export class Renderer {
       return;
     }
     if (kind === 'item') {
-      const col = { radio_part: '#ffd04a', fuel: '#ff5a3a', keycard: '#5ac8ff', charge: '#ff7a4a', sample: '#7affd8', vial: '#7aff7a' }[sub] || '#ffffff';
+      const col = { radio_part: '#ffd04a', fuel: '#ff5a3a', detonator: '#ff3a3a', cure: '#5affc8', keycard: '#5ac8ff', charge: '#ff7a4a', sample: '#7affd8', vial: '#7aff7a' }[sub] || '#ffffff';
       const g = c.createLinearGradient(0, Y, 0, Y - u * 5);
       g.addColorStop(0, S.rgba(col, 0.45));
       g.addColorStop(1, S.rgba(col, 0));
@@ -1769,9 +1809,39 @@ export class Renderer {
     }
   }
 
+  // a hazard's drawn position: on its owner for Doc's following zone, else interpolated
+  hazardPos(h) {
+    const out = this.hz || (this.hz = []);
+    out[1] = h[1];
+    out[4] = h[4];
+    out[5] = h[5];
+    const o = h[6] !== undefined && this.players.get(h[6]);
+    const q = this.prevH.get(h[0]);
+    if (o) {
+      out[2] = o.x;
+      out[3] = o.z;
+    } else if (q) {
+      out[2] = q[2] + (h[2] - q[2]) * this.alpha;
+      out[3] = q[3] + (h[3] - q[3]) * this.alpha;
+      out[4] = q[4] + (h[4] - q[4]) * this.alpha;
+    } else {
+      out[2] = h[2];
+      out[3] = h[3];
+    }
+    return out;
+  }
+
   drawProjectiles(snap) {
-    const c = this.ctx, u = this.u;
-    for (const [, kind, x, y, z, last] of snap.R) {
+    const c = this.ctx, u = this.u, al = this.alpha;
+    for (const pr of snap.R) {
+      const kind = pr[1], last = pr[5];
+      let x = pr[2], y = pr[3], z = pr[4];
+      const q = this.prevR.get(pr[0]);
+      if (q) {
+        x = q[2] + (x - q[2]) * al;
+        y = q[3] + (y - q[3]) * al;
+        z = q[4] + (z - q[4]) * al;
+      }
       const X = this.sx(x), Y = this.sy(z) - y * K * u;
       // the last slot is the forge level, except on a boss's hook where it is the boss's id
       const fx = kind === 'hook' ? null : FORGE_FX[last];
@@ -1796,14 +1866,37 @@ export class Renderer {
         S.circle(c, X, Y, u * spec[1] * 2);
         c.fillStyle = S.rgba(col, 0.3);
         c.fill();
-        this.emit(x, z, y, 0, 0, 0, col, 0.25, spec[1] * 0.8, { glow: true });
-      } else if (kind === 'rocket' || kind === 'grenade') {
+        if (Math.random() < this.dt * 50) this.emit(x, z, y, 0, 0, 0, col, 0.25, spec[1] * 0.8, { glow: true });
+      } else if ((kind === 'rocket' || kind === 'grenade') && Math.random() < this.dt * 30) {
         const hot = fx && kind === 'grenade'; // a forged launcher's shell trails coloured smoke
-        this.emit(x, z, y, 0, 0, 0.3, hot ? fx.tracer : '#b8b8b8', 0.5, 0.18, { grow: 1.5, glow: !!hot });
+        this.emit(x, z, y, 0, 0, 0.3, hot ? fx.tracer : '#b8b8b8', 0.6, 0.22, { grow: 1.5, glow: !!hot });
       }
       S.circle(c, X, Y, u * spec[1]);
       S.fillStroke(c, col, OUT, u * 0.03);
     }
+  }
+
+  // escort steps: a little hover drone with a blinking light
+  drawDrone(x, z) {
+    const c = this.ctx, u = this.u;
+    const X = this.sx(x), Y = this.sy(z) - u * (1.6 + Math.sin(this.time * 3) * 0.12);
+    S.shadow(c, X, this.sy(z), u * 0.5, u * 0.18, 0.25);
+    c.strokeStyle = OUT;
+    c.lineWidth = u * 0.06;
+    c.beginPath();
+    c.moveTo(X - u * 0.55, Y - u * 0.1);
+    c.lineTo(X + u * 0.55, Y - u * 0.1);
+    c.stroke();
+    for (const dx of [-0.55, 0.55]) {
+      S.ellipse(c, X + dx * u, Y - u * 0.18, u * 0.28 * Math.abs(Math.sin(this.time * 30 + dx)), u * 0.06);
+      c.fillStyle = 'rgba(200,220,235,0.7)';
+      c.fill();
+    }
+    S.rr(c, X - u * 0.3, Y - u * 0.15, u * 0.6, u * 0.32, u * 0.1);
+    S.fillStroke(c, '#d8dde2', OUT, u * 0.04);
+    S.circle(c, X, Y + u * 0.02, u * 0.07);
+    c.fillStyle = Math.floor(this.time * 3) % 2 ? '#5affc8' : '#2a8a6a';
+    c.fill();
   }
 
   drawEffects() {
@@ -1914,7 +2007,12 @@ export class Renderer {
     for (const p of this.players.values()) if (p.p.s !== 2) lights.push([p.x, p.z, p.p.id === view.localId ? 7.5 : 5, '#ffe8c0', 0.25]);
     for (const l of this.lights) lights.push([l.x, l.z, l.distance * (l.flicker ? 0.9 + Math.sin(this.time * 9 + l.x) * 0.08 : 1), l.color, 0.4]);
     for (const f of this.flashes) lights.push([f.x, f.z, f.r * (f.static ? 1 : f.life / f.max + 0.3), f.col, f.a * (f.static ? 1 : f.life / f.max)]);
-    for (const [, kind, x, z, r] of snap.H) if (kind === 'fire' || kind === 'napalm' || kind === 'heal') lights.push([x, z, r * 2.5, kind === 'heal' ? '#7fffb0' : '#ff8a3a', 0.35]);
+    for (const h of snap.H) {
+      const kind = h[1];
+      if (kind !== 'fire' && kind !== 'napalm' && kind !== 'heal') continue;
+      const [, , x, z, r] = this.hazardPos(h);
+      lights.push([x, z, r * 2.5, kind === 'heal' ? '#7fffb0' : '#ff8a3a', 0.35]);
+    }
     for (const o of this.zombies.values()) if (o.type === 'burner' || o.flags & 1) lights.push([o.x, o.z, 3, '#ff8a3a', 0.3]);
     const vis = lights.filter(([x, z, r]) => Math.abs(x - this.cam.x) < this.canvas.width / u / 2 + r && Math.abs(z - this.cam.z) < this.canvas.height / u / 2 + r);
     // warm additive glow (the vignette is a static CSS overlay, see #game::after)
@@ -2107,7 +2205,8 @@ export class Renderer {
       case 't': {
         const fx = FORGE_FX[e.f];
         const col = e.w < 0 ? '#9fdcff' : fx ? fx.tracer : S.hex(WEAPONS[WIDS[e.w]].color);
-        this.tracers.push({ x1: e.x, z1: e.z, x2: e.x2, z2: e.z2, col, hot: fx && fx.hot, life: 0.08, max: 0.08 });
+        const life = e.w < 0 ? 0.05 : 0.08; // turret shots: a quick faint line
+        this.tracers.push({ x1: e.x, z1: e.z, x2: e.x2, z2: e.z2, col, hot: fx && fx.hot, life, max: life });
         break;
       }
       case 'soul': {
@@ -2147,10 +2246,16 @@ export class Renderer {
         break;
       }
       case 'boom': {
+        if (e.s) {
+          // a turret's explosive round: just a small pop
+          this.burst(e.x, e.z, 0.4, 4, ['#ffb030', '#ffe070'], 3, 0.25, 0.14, { up: 0.4, drag: 4, glow: true });
+          break;
+        }
         this.rings.push({ x: e.x, z: e.z, r0: 0.3, r1: e.r * 1.1, col: '#ffb050', life: 0.35, max: 0.35, w: 0.2, flat: true });
-        this.burst(e.x, e.z, 0.4, 30, ['#ffb030', '#ff6a1a', '#ffe070'], 7 * (e.r / 3), 0.55, 0.28, { up: 0.6, drag: 3, grow: 1, glow: true });
-        this.burst(e.x, e.z, 0.4, 18, ['#505050', '#3a3a3a', '#6a6a6a'], 3 * (e.r / 3), 1.4, 0.4, { up: 0.6, drag: 1, grow: 2 });
-        this.flashes.push({ x: e.x, z: e.z, r: e.r * 3, col: '#ffa040', a: 0.9, life: 0.35, max: 0.35 });
+        this.burst(e.x, e.z, 0.4, 14, ['#ffb030', '#ff6a1a', '#ffe070'], 7 * (e.r / 3), 0.5, 0.36, { up: 0.6, drag: 3, grow: 1, glow: true });
+        this.burst(e.x, e.z, 0.4, 7, ['#505050', '#3a3a3a', '#6a6a6a'], 3 * (e.r / 3), 1.2, 0.55, { up: 0.6, drag: 1, grow: 2 });
+        // additive glow is paid per pixel (software rendering especially): keep the flash tight and brief
+        this.flashes.push({ x: e.x, z: e.z, r: Math.min(5, e.r * 1.2), col: '#ffa040', a: 0.9, life: 0.2, max: 0.2 });
         this.splat(e.x, e.z, e.r * 0.45, '#1e1a16', 0.35);
         this.shake = Math.min(1.4, this.shake + Math.max(0, 1 - camD(e.x, e.z) / 30) * (e.r / 4));
         break;

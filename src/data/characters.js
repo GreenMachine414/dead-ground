@@ -10,15 +10,15 @@ export const CHARACTERS = {
     desc: 'Builds wooden walls that block zombies. Zombies must smash through them.',
     passive: '+25 max health',
     levels: [
-      'Wall (250 HP), 2 charges, 3 walls max',
-      'Wall HP 400, 3 charges, 4 walls max',
+      'Wall (200 HP), 2 charges, 3 walls max',
+      'Wall HP 320, 3 charges, 4 walls max',
       'Spiked walls damage attackers',
-      'Wall HP 650, 4 charges, faster recharge',
-      'Reinforced steel walls: 1000 HP, longer, heavy spikes, 5 walls max',
+      'Wall HP 460, 4 charges, faster recharge',
+      'Reinforced steel walls: 600 HP, longer, heavy spikes, 5 walls max',
     ],
     stats(lvl) {
       return {
-        wallHp: [250, 400, 475, 650, 1000][lvl - 1],
+        wallHp: [200, 320, 360, 460, 600][lvl - 1],
         charges: [2, 3, 3, 4, 4][lvl - 1],
         cooldown: [28, 24.5, 22, 18.5, 16][lvl - 1],
         spikes: [0, 0, 16, 26, 45][lvl - 1],
