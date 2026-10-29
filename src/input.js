@@ -91,14 +91,13 @@ export class Input {
     const mz = (k.has(b.down) || k.has('ArrowDown') ? 1 : 0) - (k.has(b.up) || k.has('ArrowUp') ? 1 : 0);
     const acts = this.acts;
     this.acts = {};
-    if (!this.enabled) return { mx: 0, mz: 0, ax: aim ? aim.x : 0, az: aim ? aim.z : 0, fire: false, sprint: false, use: false, acts: {} };
+    if (!this.enabled) return { mx: 0, mz: 0, ax: aim ? aim.x : 0, az: aim ? aim.z : 0, fire: false, use: false, acts: {} };
     return {
       mx,
       mz,
       ax: aim ? aim.x : 0,
       az: aim ? aim.z : 0,
       fire: this.mouse.left,
-      sprint: k.has(b.sprint),
       use: k.has(b.use),
       acts,
     };

@@ -17,7 +17,7 @@ function quiet(mapId, n = 1) {
   g.waveT = 1e9;
   return g;
 }
-const idle = (p, extra = {}) => ({ mx: 0, mz: 0, ax: p.x + 5, az: p.z, fire: false, sprint: false, use: false, acts: {}, ...extra });
+const idle = (p, extra = {}) => ({ mx: 0, mz: 0, ax: p.x + 5, az: p.z, fire: false, use: false, acts: {}, ...extra });
 function run(g, seconds, input) {
   const events = [];
   for (let i = 0; i < seconds / DT; i++) {
@@ -404,6 +404,92 @@ for (let m = 3; m <= 5; m++) {
     }
   }
   check('containers not searchable through walls', through === 0, `through=${through}`);
+}
+
+// 16) new story steps: escort only moves with company, deliver drops with a downed carrier, hunt counts one type
+{
+  // two players, so one going down doesn't end the game
+  const story = (mapId) => {
+    const g = new Game({ mapId, mode: 'story', seed: 5, unlockedMap: 5, players: [{ id: 0, name: 'P', char: 'volt', level: 3 }, { id: 1, name: 'Q', char: 'doc', level: 3 }] });
+    g.players[1].x = 3;
+    g.players[1].z = 3;
+    for (const z of [...g.zombies]) g.removeZombie(z);
+    return g;
+  };
+  const setStep = (g, step) => {
+    g.story.steps.splice(g.stepIdx, 1, step);
+    g.step = step;
+    g.beginStep();
+  };
+  // escort
+  let g = story(2);
+  let p = g.players[0];
+  setStep(g, { type: 'escort', from: 'plaza', to: 'subway', speed: 1.6, radius: 4.5, text: 'e' });
+  p.x = 5;
+  p.z = 5;
+  const start = { ...g.ss.pos };
+  run(g, 2);
+  check('escort drone waits without players', g.ss.pos.x === start.x && g.ss.pos.z === start.z);
+  let n = 0;
+  while (g.step.type === 'escort' && n++ < 4000) {
+    p.x = g.ss.pos.x;
+    p.z = g.ss.pos.z + 1;
+    p.invuln = 99;
+    run(g, 0.1);
+  }
+  check('escort drone reaches the destination', g.step.type !== 'escort', `${n} ticks`);
+  // deliver
+  g = story(1);
+  p = g.players[0];
+  setStep(g, { type: 'deliver', item: 'fuel', label: 'Fuel Can', from: 'barn', to: 'radio', radius: 3, text: 'd' });
+  const fuel = () => g.pickups.find((k) => k.item === 'fuel');
+  const can = fuel();
+  p.x = can.x;
+  p.z = can.z;
+  run(g, 0.1);
+  check('deliver: item picked up', g.ss.carrier === p.id);
+  p.state = 'down';
+  run(g, DT);
+  check('deliver: item dropped when the carrier goes down', g.ss.carrier === -1 && !!fuel());
+  p.state = 'alive';
+  const drop = fuel();
+  const at = g.stepIdx;
+  p.x = drop.x;
+  p.z = drop.z;
+  run(g, 0.1);
+  p.x = g.ss.zone.x;
+  p.z = g.ss.zone.z;
+  run(g, 0.1);
+  check('deliver: done in the zone', g.stepIdx > at);
+  // hunt
+  g = story(1);
+  p = g.players[0];
+  setStep(g, { type: 'hunt', zombie: 'runner', count: 3, text: 'h' });
+  g.damageZombie(g.spawnZombie('walker', p.x + 3, p.z, false), 1e9, p.id, 'bullet');
+  for (let i = 0; i < 2; i++) g.damageZombie(g.spawnZombie('runner', p.x + 3, p.z, false), 1e9, p.id, 'bullet');
+  check('hunt counts only its type', g.ss.got === 2, `got ${g.ss.got}`);
+  g.damageZombie(g.spawnZombie('runner', p.x + 3, p.z, false), 1e9, p.id, 'bullet');
+  run(g, DT);
+  check('hunt completes', g.step.type !== 'hunt');
+}
+
+// 17) grenades cap at 3, Grenadier included; Doc's level 5 zone follows him
+{
+  const g = quiet(1);
+  const p = g.players[0];
+  p.grenades = 3;
+  p.choices = [['grenadier']];
+  g.pickBoon(p, 0);
+  g.startWave();
+  check('grenades cap at 3', p.grenades === 3 && g.maxGrenades(p) === 3, `${p.grenades}`);
+  const d = new Game({ mapId: 1, mode: 'endless', seed: 5, unlockedMap: 5, players: [{ id: 0, name: 'D', char: 'doc', level: 5 }] });
+  d.waveT = 1e9;
+  const q = d.players[0];
+  d.useAbility(q);
+  const zone = d.hazards.find((h) => h.kind === 'heal');
+  q.x += 2;
+  run(d, DT);
+  check('doc level 5 zone follows him', zone.x === q.x && zone.z === q.z && d.snapshot().H.some((h) => h[6] === q.id));
 }
 
 console.log(failures ? `${failures} FAILED` : 'ALL PASSED');

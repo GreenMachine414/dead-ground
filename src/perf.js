@@ -7,6 +7,7 @@ const SCENES = [
   { map: 1, name: 'Harvest Farm zoomed out', zoom: 0.65 },
   { map: 4, name: 'Whiteout Station (forest)', zoom: 1 },
   { map: 2, name: 'Dead End Downtown', zoom: 1 },
+  { map: 2, name: 'Downtown grenade spam', zoom: 1, grenades: true },
 ];
 
 function pct(arr, p) {
@@ -48,6 +49,14 @@ export async function runPerf(app, opts = {}) {
         const w = g.curWeapon(p);
         w.reserve = 999;
         const t = (performance.now() - t0) / 1000;
+        const acts = {};
+        if (sc.grenades) {
+          p.grenades = 3;
+          if (t - (p.lastNade || 0) > 0.4) {
+            p.lastNade = t;
+            acts.grenade = true;
+          }
+        }
         let best = null, bd = Infinity;
         for (const z of g.zombies) {
           const d = Math.hypot(z.x - p.x, z.z - p.z);
@@ -55,7 +64,7 @@ export async function runPerf(app, opts = {}) {
         }
         return {
           mx: Math.cos(t * 0.5), mz: Math.sin(t * 0.5), ax: best ? best.x : p.x + 3, az: best ? best.z : p.z,
-          fire: !!best && bd < 18, sprint: false, use: false, acts: {},
+          fire: !!best && bd < 18, use: false, acts,
         };
       };
       const keepHorde = setInterval(() => {

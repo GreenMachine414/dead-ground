@@ -48,7 +48,8 @@ export const WEAPONS = {
     ammoCost: 1300, color: 0xffd080, sound: 'rifle', len: 1.15, gunColor: 0x2e3328, boxWeight: 7,
   },
   raygun: {
-    name: 'Plasma Ray', map: 4, minRarity: 2, type: 'projectile', damage: 200, pierce: 3, rate: 3.2, auto: false,
+    name: 'Plasma Ray', map: 4, minRarity: 2, type: 'projectile', damage: 185 / 1.26, // 185 at Rare, its lowest rarity
+    pierce: 3, rate: 3.2, auto: false,
     mag: 20, reserve: 160, reload: 2.2, spread: 0.01, range: 40, projSpeed: 40, proj: 'ray',
     ammoCost: 1500, color: 0x40ff60, sound: 'ray', len: 0.6, gunColor: 0xc0c8d0, boxWeight: 4,
   },

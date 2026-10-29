@@ -31,7 +31,8 @@ const GUN_KILLS = new Set(['bullet', 'fire', 'burn', 'chain', 'gunblast']);
 const OVERCHARGE_STATS = ['wallHp', 'spikes', 'damage', 'hp', 'duration', 'heal', 'zoneHeal', 'zoneDamage', 'restock', 'life'];
 const ZSTATE = { rise: 0, move: 1, attack: 2, windup: 3, charge: 4, leap: 5, stun: 6, drain: 2 };
 const BOX_COST = 950;
-const MAX_GRENADES = 4;
+const ZOMBIE_COUNT = 1.62; // zombies per round, relative to the base formula
+const MAX_GRENADES = 3; // hard cap, Grenadier included
 const BOSS_CD = {
   charge: 7, slam: 4, throw: 5, volley: 5.5, summon: 15, teleport: 7, shockwave: 9, leap: 6,
   sweep: 3.5, hook: 7, bile: 8, devour: 14, barrage: 9, rally: 12, eggs: 11, mirror: 13, drain: 10,
@@ -87,16 +88,7 @@ export function stepMovement(world, sgrid, p, input, dt, speed) {
     mx /= l;
     mz /= l;
   }
-  let sp = speed;
-  const wantsSprint = input.sprint && l > 0.1 && p.stamina > 0.05;
-  if (wantsSprint) {
-    sp *= 1.45;
-    p.stamina = Math.max(0, p.stamina - dt * (p.perks && p.perks.swift ? 0.16 : 0.25));
-  } else {
-    p.stamina = Math.min(1, p.stamina + dt * 0.2);
-  }
-  p.sprinting = wantsSprint;
-  moveCircle(world, sgrid, p, mx * sp * dt, mz * sp * dt, PLAYER_R);
+  moveCircle(world, sgrid, p, mx * speed * dt, mz * speed * dt, PLAYER_R);
   p.moving = l > 0.1;
 }
 
@@ -201,8 +193,6 @@ export class Game {
       kills: 0,
       downs: 0,
       revives: 0,
-      stamina: 1,
-      sprinting: false,
       moving: false,
       lastHurt: -10,
       invuln: 0,
@@ -211,7 +201,7 @@ export class Game {
       burnDps: 0,
       prompt: '',
       promptProg: -1,
-      input: { mx: 0, mz: 0, ax: sp.x, az: sp.z - 5, fire: false, sprint: false, use: false },
+      input: { mx: 0, mz: 0, ax: sp.x, az: sp.z - 5, fire: false, use: false },
       acts: {},
       interact: null,
       emptyT: 0,
@@ -262,7 +252,7 @@ export class Game {
   }
 
   maxGrenades(p) {
-    return MAX_GRENADES + (p.boons.grenadier || 0);
+    return MAX_GRENADES;
   }
 
   setInput(pid, input) {
@@ -305,7 +295,7 @@ export class Game {
       p.maxHp += 20;
       p.hp += 20;
     }
-    if (id === 'grenadier') p.grenades++;
+    if (id === 'grenadier') p.grenades = Math.min(MAX_GRENADES, p.grenades + 1);
     this.emit({ k: 'boon', p: p.id, b: id, x: p.x, z: p.z });
   }
 
@@ -377,8 +367,6 @@ export class Game {
         p.z = Math.max(1, Math.min(this.world.H - 1, input.pz));
       }
       p.moving = !!input.moving;
-      p.sprinting = !!input.sprinting;
-      if (input.stamina !== undefined) p.stamina = input.stamina;
     } else {
       stepMovement(this.world, this.sgrid, p, input, dt, playerSpeed(p, this.curWeapon(p).id));
     }
@@ -583,7 +571,7 @@ export class Game {
 
   explode(x, z, radius, dmg, src) {
     // src: {pid} for player explosions, {enemy:true} for zombie explosions
-    this.emit({ k: 'boom', x, z, r: radius });
+    this.emit(src.small ? { k: 'boom', x, z, r: radius, s: 1 } : { k: 'boom', x, z, r: radius });
     if (src.enemy) {
       for (const p of this.players) {
         if (p.state !== 'alive') continue;
@@ -616,7 +604,7 @@ export class Game {
     if (this.instakill > 0 && !z.boss && !z.mini) dmg = Math.max(dmg, z.hp + 1);
     z.hp -= dmg;
     z.hurtT = 0.12;
-    if (kind !== 'fire' && kind !== 'burn' && kind !== 'spikes' && kind !== 'zone') this.emit({ k: 'dmg', x: z.x, z: z.z, d: Math.round(dmg), c: crit ? 1 : 0 });
+    if (kind !== 'fire' && kind !== 'burn' && kind !== 'spikes' && kind !== 'zone' && kind !== 'turret') this.emit({ k: 'dmg', x: z.x, z: z.z, d: Math.round(dmg), c: crit ? 1 : 0 });
     if (p && (kind === 'bullet' || kind === 'melee')) this.givePoints(p, 10);
     if (z.hp <= 0) this.killZombie(z, p, kind);
   }
@@ -648,6 +636,7 @@ export class Game {
       ss.got++;
       this.emit({ k: 'soul', x: z.x, z: z.z, x2: ss.zone.x, z2: ss.zone.z });
     }
+    if (this.step && this.step.type === 'hunt' && !ss.waiting && z.type === this.step.zombie && ss.got < ss.need) ss.got++;
     if (kind === 'devour') return;
     // XP: killer gets full, teammates a share (bosses: everyone gets full)
     const xp = Math.round(z.def.points / 5);
@@ -934,7 +923,7 @@ export class Game {
       const end = this.hitscan(s.owner, ox, oz, ca, sa, s.range, s.dmg, 1, 'turret');
       this.emit({ k: 't', x: ox, z: oz, x2: ox + ca * end, z2: oz + sa * end, w: -1 });
       this.emit({ k: 'sfx', s: 'turret', x: s.x, z: s.z });
-      if (s.explosive) this.explode(ox + ca * end, oz + sa * end, 1.3, s.dmg * 0.4, { pid: s.owner });
+      if (s.explosive) this.explode(ox + ca * end, oz + sa * end, 1.3, s.dmg * 0.4, { pid: s.owner, small: true });
     }
   }
 
@@ -1487,10 +1476,10 @@ export class Game {
     this.wave++;
     const n = this.n;
     this.waveState = 'active';
-    this.toSpawn = Math.round((5 + this.wave * 3) * (1 + 0.6 * (n - 1))) + Math.max(0, this.wave - 11) * 2;
+    this.toSpawn = Math.round((5 + this.wave * 3) * ZOMBIE_COUNT * this.map.crowd * (1 + 0.6 * (n - 1))) + Math.max(0, this.wave - 11) * 2;
     // spawns trickle in across the round, and at most ~45% of it is alive at once,
     // so a single Kaboom can't wipe most of a late wave
-    this.spawnInterval = Math.max(0.75, 2.2 - this.wave * 0.08) / (1 + 0.35 * (n - 1));
+    this.spawnInterval = Math.max(0.75, 2.2 - this.wave * 0.08) / ZOMBIE_COUNT / this.map.crowd / (1 + 0.35 * (n - 1));
     this.maxAlive = Math.min(64, 20 + this.wave + 6 * (n - 1), Math.max(8, Math.ceil(this.toSpawn * 0.45)));
     this.spawnT = 1;
     this.powerupsThisWave = 0;
@@ -1545,7 +1534,9 @@ export class Game {
     if (!sp) return false;
     const pool = this.map.zombies.filter((e) => e.minWave <= this.wave);
     const e = this.rng.weighted(pool, (x) => x.weight + (x.type !== 'walker' ? Math.min(4, this.wave * 0.25) : 0));
-    this.spawnZombie(e.type, sp.x + (this.rng() - 0.5) * 0.6, sp.z + (this.rng() - 0.5) * 0.6);
+    // hunt steps: the quarry turns up a lot more while it is being hunted
+    const hunt = this.step && this.step.type === 'hunt' && !this.ss.waiting && this.rng() < 0.35;
+    this.spawnZombie(hunt ? this.step.zombie : e.type, sp.x + (this.rng() - 0.5) * 0.6, sp.z + (this.rng() - 0.5) * 0.6);
     return true;
   }
 
@@ -2330,7 +2321,8 @@ export class Game {
   //   nextRound     start when the next round begins (bosses tear out at a round start)
   //   horde         keep zombies spawning until it is done
   //   timeLimit     (activate) finish every station within this many seconds of the first
-  // and 'souls' steps need kills near a collector.
+  // and 'souls' steps need kills near a collector, 'hunt' steps kills of one zombie type, 'deliver'
+  // steps carrying an item to a zone, and 'escort' steps a drone that only moves with someone near.
   startStep(i) {
     const step = this.story.steps[i];
     this.stepIdx = i;
@@ -2379,8 +2371,53 @@ export class Game {
     } else if (step.type === 'extract') {
       ss.zone = { ...at(step.spot), r: step.radius };
       ss.hold = 0;
+    } else if (step.type === 'hunt') {
+      ss.got = 0;
+      ss.need = step.count;
+    } else if (step.type === 'deliver') {
+      const a = at(step.from);
+      this.pickups.push({ id: this.nextId++, kind: 'item', item: step.item, label: step.label, x: a.x, z: a.z });
+      ss.carrier = -1;
+      ss.zone = { ...at(step.to), r: step.radius };
+    } else if (step.type === 'escort') {
+      const a = at(step.from);
+      ss.pos = { x: a.x, z: a.z };
+      ss.path = this.gridPath(a, at(step.to));
+      ss.i = 0;
+      ss.len = ss.path.reduce((s, q, k) => s + Math.hypot(q.x - (k ? ss.path[k - 1].x : a.x), q.z - (k ? ss.path[k - 1].z : a.z)), 0);
+      ss.done = 0;
     }
     this.emit({ k: 'obj', s: step.text, i: this.stepIdx });
+  }
+
+  // walkable route between two points (BFS over the grid, then only the corners kept)
+  gridPath(a, b) {
+    const { W, H, grid } = this.world;
+    const start = Math.floor(a.z) * W + Math.floor(a.x), goal = Math.floor(b.z) * W + Math.floor(b.x);
+    const prev = new Int32Array(W * H).fill(-1);
+    prev[start] = start;
+    const q = [start];
+    for (let h = 0; h < q.length && prev[goal] < 0; h++) {
+      const i = q[h], x = i % W, z = (i / W) | 0;
+      for (const n of [x + 1 < W ? i + 1 : -1, x > 0 ? i - 1 : -1, z + 1 < H ? i + W : -1, z > 0 ? i - W : -1]) {
+        if (n < 0 || prev[n] >= 0 || grid[n] !== 0) continue;
+        prev[n] = i;
+        q.push(n);
+      }
+    }
+    if (prev[goal] < 0) return [{ x: b.x, z: b.z }];
+    const cells = [];
+    for (let i = goal; i !== start; i = prev[i]) cells.push({ x: (i % W) + 0.5, z: ((i / W) | 0) + 0.5 });
+    cells.reverse();
+    const out = [];
+    let from = a;
+    for (let k = 0; k < cells.length; k++) {
+      if (k + 1 < cells.length && hasLOS(this.world, from.x, from.z, cells[k + 1].x, cells[k + 1].z)) continue;
+      out.push(cells[k]);
+      from = cells[k];
+    }
+    out[out.length - 1] = { x: b.x, z: b.z };
+    return out;
   }
 
   completeStep() {
@@ -2399,6 +2436,7 @@ export class Game {
     this.emit({ k: 'sfx', s: 'item', x: k.x, z: k.z });
     this.emit({ k: 'note', p: -1, s: p.name + ' found a ' + k.label });
     if (this.step && this.step.type === 'collect') this.ss.got++;
+    if (this.step && this.step.type === 'deliver' && k.item === this.step.item) this.ss.carrier = p.id;
     if (this.step && this.step.type === 'boss' && this.ss.dropped) this.ss.pickedDrop = true;
   }
 
@@ -2438,8 +2476,44 @@ export class Game {
         }
         break;
       case 'souls':
+      case 'hunt':
         if (ss.got >= ss.need) this.completeStep();
         break;
+      case 'deliver': {
+        if (ss.carrier < 0) break;
+        const c = this.players.find((p) => p.id === ss.carrier);
+        if (!c || c.state !== 'alive') {
+          // the carrier went down: the item falls where they were
+          const x = c ? c.x : ss.zone.x, z = c ? c.z : ss.zone.z;
+          this.pickups.push({ id: this.nextId++, kind: 'item', item: step.item, label: step.label, x, z });
+          this.emit({ k: 'note', p: -1, s: 'The ' + step.label + ' was dropped!' });
+          ss.carrier = -1;
+        } else if (dist2(c.x, c.z, ss.zone.x, ss.zone.z) < ss.zone.r * ss.zone.r) {
+          this.completeStep();
+        }
+        break;
+      }
+      case 'escort': {
+        ss.near = this.players.some((p) => p.state === 'alive' && dist2(p.x, p.z, ss.pos.x, ss.pos.z) < step.radius * step.radius);
+        let move = ss.near ? step.speed * dt : 0;
+        while (move > 0 && ss.i < ss.path.length) {
+          const t = ss.path[ss.i], d = Math.hypot(t.x - ss.pos.x, t.z - ss.pos.z);
+          if (d <= move) {
+            ss.pos.x = t.x;
+            ss.pos.z = t.z;
+            ss.i++;
+            ss.done += d;
+            move -= d;
+          } else {
+            ss.pos.x += ((t.x - ss.pos.x) / d) * move;
+            ss.pos.z += ((t.z - ss.pos.z) / d) * move;
+            ss.done += move;
+            move = 0;
+          }
+        }
+        if (ss.i >= ss.path.length) this.completeStep();
+        break;
+      }
       case 'survive':
         ss.left -= dt;
         if (ss.left <= 0) this.completeStep();
@@ -2492,6 +2566,23 @@ export class Game {
     } else if (step.type === 'souls') {
       o.prog = ss.got + ' / ' + ss.need + ' souls';
       o.zone = [ss.zone.x, ss.zone.z, ss.zone.r];
+    } else if (step.type === 'hunt') {
+      o.prog = ss.got + ' / ' + ss.need + ' ' + ZOMBIES[step.zombie].name + 's';
+      for (const z of this.zombies) if (z.type === step.zombie && z.state !== 'rise' && o.mk.length < 12) o.mk.push([z.x, z.z, 2]);
+    } else if (step.type === 'deliver') {
+      const c = ss.carrier >= 0 && this.players.find((p) => p.id === ss.carrier);
+      if (c) {
+        o.prog = c.name + ' has the ' + step.label;
+        o.zone = [ss.zone.x, ss.zone.z, ss.zone.r];
+      } else {
+        o.prog = 'Pick up the ' + step.label;
+        for (const k of this.pickups) if (k.kind === 'item') o.mk.push([k.x, k.z, 0]);
+      }
+    } else if (step.type === 'escort') {
+      const r2 = (v) => Math.round(v * 100) / 100;
+      o.prog = Math.min(99, Math.floor((ss.done / (ss.len || 1)) * 100)) + '%' + (ss.near ? '' : ' — stay close to keep it moving');
+      o.zone = [r2(ss.pos.x), r2(ss.pos.z), step.radius];
+      o.dr = [r2(ss.pos.x), r2(ss.pos.z)];
     } else if (step.type === 'survive') {
       o.prog = Math.ceil(ss.left) + 's';
     } else if (step.type === 'defend') {
@@ -2524,7 +2615,7 @@ export class Game {
         xp: p.xp, xpn: xpForLevel(p.rank), rk: p.rank, chs: p.choices[0] || null, nch: p.choices.length, bo: p.boons,
         pts: p.points, k: p.kills, cd: r2(p.abilityCd), cdm: p.abilityMax || 1, ch: p.charges, chm: p.maxCharges, g: p.grenades,
         pk: Object.keys(p.perks), rl: p.reloadT > 0 ? r2(1 - p.reloadT / p.reloadMax) : -1, pr: p.prompt, pp: r2(p.promptProg),
-        bl: r2(p.bleed), rv: r2(p.revive), st: r2(p.stamina), iv: p.invuln > 0 ? 1 : 0, mv: p.moving ? 1 : 0, sp: p.sprinting ? 1 : 0,
+        bl: r2(p.bleed), rv: r2(p.revive), iv: p.invuln > 0 ? 1 : 0, mv: p.moving ? 1 : 0,
         tp: p.tp, er: p.earned, dn: p.downs, rvs: p.revives, sh: Math.ceil(p.shield), bn: p.burnT > 0 ? 1 : 0,
       })),
       Z: this.zombies.map((z) => [
@@ -2542,7 +2633,7 @@ export class Game {
       B: [this.box.spot, this.box.state, this.box.wid, r2(this.box.t), this.box.user, this.box.rarity],
       // gun in the forge: [weapon id, forge level it comes out at, rarity, progress 0-1, owner id]
       F: this.forgeJob && [this.forgeJob.w.id, this.forgeJob.w.forged, this.forgeJob.w.rarity, r2(1 - this.forgeJob.t / FORGE.time), this.forgeJob.pid],
-      H: this.hazards.map((h) => [h.id, h.kind, r2(h.x), r2(h.z), r2(h.r), r2(h.t)]),
+      H: this.hazards.map((h) => (h.follow ? [h.id, h.kind, r2(h.x), r2(h.z), r2(h.r), r2(h.t), h.pid] : [h.id, h.kind, r2(h.x), r2(h.z), r2(h.r), r2(h.t)])),
       O: this.objectiveView(),
       PW: [r2(Math.max(0, this.instakill)), r2(Math.max(0, this.double))],
       BS: bossList,

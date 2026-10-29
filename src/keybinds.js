@@ -5,7 +5,6 @@ export const BINDS = [
   { id: 'down', label: 'Move down', def: 'KeyS' },
   { id: 'left', label: 'Move left', def: 'KeyA' },
   { id: 'right', label: 'Move right', def: 'KeyD' },
-  { id: 'sprint', label: 'Sprint', def: 'ShiftLeft' },
   { id: 'reload', label: 'Reload', def: 'KeyR' },
   { id: 'swap', label: 'Swap weapon (also mouse wheel, middle / side buttons)', def: 'KeyQ' },
   { id: 'ability', label: 'Ability (also right click)', def: 'KeyF' },

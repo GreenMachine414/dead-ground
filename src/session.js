@@ -149,6 +149,8 @@ export class Session {
       this.game.setInput(msg.from, msg.d);
     } else if (this.role === 'client' && msg.t === 'h' && msg.d && msg.d.t === 'snap') {
       const s = msg.d.s;
+      this.prevSnap = this.snap;
+      this.snapAt = performance.now();
       this.snap = s;
       if (s.E) this.clientEvents.push(...s.E);
       // structures + doors for local collision prediction
@@ -177,17 +179,28 @@ export class Session {
       // solo: the world pauses while you pick a level-up card
       const lp = this.role === 'solo' && this.game.players.find((q) => q.id === this.localId);
       const choosing = lp && lp.choices.length > 0 && lp.state !== 'dead';
+      let n = 0;
       if (!this.paused && !choosing) {
         this.acc += dt;
-        let n = 0;
         while (this.acc >= STEP && n < 4) {
+          // the state just before the last step is where this frame's interpolation starts
+          if (n > 0 && this.acc < STEP * 2) this.snap = this.game.snapshot();
           this.game.update(STEP);
           this.acc -= STEP;
           n++;
         }
         if (n === 4) this.acc = 0;
       }
-      snap = this.game.snapshot();
+      // the world is drawn between the last two sim steps (acc / STEP of the way), so motion is
+      // smooth at any refresh rate; a snapshot is only built when the sim actually stepped
+      if (n > 0) {
+        this.prevSnap = this.snap;
+        this.snap = this.game.snapshot();
+      } else if (this.paused || choosing) {
+        this.prevSnap = null;
+        this.snap = this.game.snapshot();
+      }
+      snap = this.snap;
       events = this.game.drainEvents();
       if (this.role === 'host') {
         this.netEvents.push(...events);
@@ -197,7 +210,7 @@ export class Session {
           this.netEvents = [];
         }
       }
-      view = { localId: this.localId, smooth: false };
+      view = { localId: this.localId, smooth: false, prev: this.prevSnap, alpha: this.acc / STEP };
     } else {
       snap = this.snap;
       if (!snap) return;
@@ -222,7 +235,7 @@ export class Session {
           else me.cw = this.cwPred.cw;
         }
         if (!this.pred || this.pred.tp !== me.tp || Math.hypot(this.pred.x - me.x, this.pred.z - me.z) > 6) {
-          this.pred = { x: me.x, z: me.z, stamina: me.st, tp: me.tp, perks: {}, char: me.c, moving: false, sprinting: false };
+          this.pred = { x: me.x, z: me.z, tp: me.tp, perks: {}, char: me.c, moving: false };
         }
         this.pred.perks = Object.fromEntries(me.pk.map((k) => [k, true]));
         if (me.s === 0) {
@@ -237,8 +250,8 @@ export class Session {
         if (now - this.lastInputSend >= INPUT_INTERVAL) {
           this.lastInputSend = now;
           const sent = this.net.toHost({
-            t: 'in', mx: inp.mx, mz: inp.mz, ax: inp.ax, az: inp.az, fire: inp.fire, sprint: inp.sprint, use: inp.use,
-            acts: this.pendingActs, px: this.pred.x, pz: this.pred.z, tp: this.pred.tp, moving: this.pred.moving, sprinting: this.pred.sprinting, stamina: this.pred.stamina,
+            t: 'in', mx: inp.mx, mz: inp.mz, ax: inp.ax, az: inp.az, fire: inp.fire, use: inp.use,
+            acts: this.pendingActs, px: this.pred.x, pz: this.pred.z, tp: this.pred.tp, moving: this.pred.moving,
           });
           if (sent) this.pendingActs = {};
         }
@@ -249,6 +262,9 @@ export class Session {
       } else {
         view = { localId: this.localId, smooth: true };
       }
+      // projectiles and hazards glide between the host's snapshots instead of jumping 20x a second
+      view.prev = this.prevSnap;
+      view.alpha = (now - this.snapAt) / SNAP_INTERVAL;
     }
     this.snap = snap;
     const me = snap.P.find((p) => p.id === this.localId);

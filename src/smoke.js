@@ -23,7 +23,7 @@ function botInput(game, pid, t) {
   if (Math.random() < 0.003) acts.grenade = true;
   return {
     mx: Math.cos(t * 0.7) * 0.6, mz: Math.sin(t * 0.7) * 0.6,
-    ax: best ? best.x : p.x + 3, az: best ? best.z : p.z, fire: !!best && bd < 22, sprint: false, use: false, acts,
+    ax: best ? best.x : p.x + 3, az: best ? best.z : p.z, fire: !!best && bd < 22, use: false, acts,
   };
 }
 
@@ -218,7 +218,7 @@ export async function runSmoke(app) {
         const cont = g.containers.find((c) => c.kind === 'rack') || g.containers[0];
         p.x = cont.x;
         p.z = cont.z + 0.3;
-        s.input.sample = () => ({ mx: 0, mz: 0, ax: cont.x, az: cont.z - 2, fire: false, sprint: false, use: true, acts: {} });
+        s.input.sample = () => ({ mx: 0, mz: 0, ax: cont.x, az: cont.z - 2, fire: false, use: true, acts: {} });
         await wait(700);
         await shot('map1-search');
         await wait(1200);
@@ -298,7 +298,7 @@ export async function runSmoke(app) {
     let k = 0;
     const iv = setInterval(() => {
       k++;
-      ws.send(JSON.stringify({ d: { t: 'in', mx: 1, mz: 0, ax: startX + 10, az: startZ, fire: true, sprint: false, use: false, acts: k === 5 ? { ability: true } : {}, px: startX + Math.min(4, k * 0.1), pz: startZ, moving: true, stamina: 1 } }));
+      ws.send(JSON.stringify({ d: { t: 'in', mx: 1, mz: 0, ax: startX + 10, az: startZ, fire: true, use: false, acts: k === 5 ? { ability: true } : {}, px: startX + Math.min(4, k * 0.1), pz: startZ, moving: true } }));
     }, 33);
     g.waveT = 0.2;
     app.session.input.sample = () => botInput(g, 0, performance.now() / 1000);
@@ -352,7 +352,7 @@ export async function runSmoke(app) {
     }, 50);
     const me0 = hostGame.players[1];
     const sx = me0.x;
-    cs.input.sample = (aim) => ({ mx: -1, mz: 0, ax: aim ? aim.x : 0, az: aim ? aim.z : 0, fire: true, sprint: false, use: false, acts: {} });
+    cs.input.sample = (aim) => ({ mx: -1, mz: 0, ax: aim ? aim.x : 0, az: aim ? aim.z : 0, fire: true, use: false, acts: {} });
     await wait(5000);
     clearInterval(tick);
     await shot('07-client-view');

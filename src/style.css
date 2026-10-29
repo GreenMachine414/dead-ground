@@ -1270,15 +1270,6 @@ select {
   line-height: 12px;
   font-weight: 800;
 }
-.bar.stam {
-  height: 8px;
-  margin-top: 4px;
-  border-width: 2px;
-}
-.bar.stam .fill {
-  background: linear-gradient(#ffe08a, #e8b83a);
-  transition: none;
-}
 .row2 {
   display: flex;
   align-items: center;

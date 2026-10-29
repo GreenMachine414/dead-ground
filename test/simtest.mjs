@@ -12,7 +12,7 @@ function bot(game, p, god) {
     const d = Math.hypot(z.x - p.x, z.z - p.z);
     if (d < bd) { bd = d; best = z; }
   }
-  const input = { mx: 0, mz: 0, ax: p.x + 1, az: p.z, fire: false, sprint: false, use: false, acts: {} };
+  const input = { mx: 0, mz: 0, ax: p.x + 1, az: p.z, fire: false, use: false, acts: {} };
   if (best && bd < 25) {
     input.ax = best.x; input.az = best.z; input.fire = true;
   }

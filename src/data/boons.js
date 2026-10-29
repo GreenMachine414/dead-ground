@@ -10,7 +10,7 @@ export const BOONS = {
   vamp: { name: 'Bloodthirst', desc: 'Heal 3 HP per kill', icon: '❦', color: '#c0392b', max: 3 },
   greed: { name: 'Scavenger', desc: '+15% points earned', icon: '$', color: '#e8c547', max: 3 },
   crit: { name: 'Deadeye', desc: '+8% chance to deal double damage', icon: '✦', color: '#ff7a59', max: 4 },
-  grenadier: { name: 'Grenadier', desc: '+1 grenade capacity, +25% grenade damage', icon: '●', color: '#8fbf5a', max: 3 },
+  grenadier: { name: 'Grenadier', desc: '+1 grenade now, +25% grenade damage', icon: '●', color: '#8fbf5a', max: 3 },
   mend: { name: 'Second Breath', desc: 'Health regenerates sooner and faster', icon: '✚', color: '#7be0a8', max: 2 },
   aegis: { name: 'Aegis', desc: '+25 shield that recharges after 5s without damage', icon: '⛨', color: '#7ab8ff', max: 3 },
   laststand: { name: 'Last Stand', desc: 'Get back up on your own the next time you go down', icon: '✝', color: '#ffd65a', max: 1 },
