@@ -4,6 +4,9 @@ import { Game } from './game/sim.js';
 import { MAPS } from './data/maps.js';
 import { Net, PROTOCOL } from './net.js';
 import { resolveBinds } from './keybinds.js';
+import { Input } from './input.js';
+import { GFX } from './gfx.js';
+import { defaultProfile } from './profile.js';
 import { hasVulgar, checkReport, sendReport, reportPayload } from './bugreport.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -67,6 +70,56 @@ export async function runSmoke(app) {
     app.rebind('map', 'KeyN');
     await wait(200);
     await shot('02b-settings');
+    // fullscreen is the default for new players
+    check('fullscreen-default', defaultProfile().settings.fullscreen === true);
+    // mouse side buttons: bindable like keys, and do nothing while unbound
+    {
+      const btn = document.querySelector('#set-keys [data-bind="reload"]');
+      app.listenKey(btn);
+      window.dispatchEvent(new MouseEvent('mousedown', { button: 3 }));
+      const b = resolveBinds(app.profile.settings.keys);
+      check('rebind-mouse4', b.reload === 'Mouse4' && document.querySelector('#set-keys [data-bind="reload"]').textContent === 'Mouse 4');
+      const sideAct = (binds, button) => {
+        const inp = new Input(window, binds);
+        window.dispatchEvent(new MouseEvent('mousedown', { button }));
+        const s = inp.sample(null);
+        window.dispatchEvent(new MouseEvent('mouseup', { button }));
+        const held = inp.keys.size;
+        inp.dispose();
+        return [s.acts, held];
+      };
+      const [acts, held] = sideAct(b, 3);
+      check('mouse4-drives-action', acts.reload === true && held === 0);
+      check('mouse5-unbound-does-nothing', Object.keys(sideAct(b, 4)[0]).length === 0);
+      app.setSetting('keys', {});
+      app.rebind('map', 'KeyN');
+    }
+    // graphics: Low / High, applied to the menu backdrop at once
+    {
+      const sel = document.getElementById('set-graphics'), before = app.profile.settings.graphics;
+      check('gfx-two-options', [...sel.options].map((o) => o.value).join() === GFX.join() && sel.value === before);
+      for (const target of [before === 'low' ? 'high' : 'low', before]) {
+        sel.value = target;
+        sel.dispatchEvent(new Event('change'));
+        await wait(200);
+        check(`gfx-live-${target}`, app.profile.settings.graphics === target && app.backdrop.renderer.quality === (target === 'low' ? 0.6 : 1));
+      }
+    }
+    // Reset settings to defaults: everything on the Settings screen back at once, the co-op address kept
+    {
+      const join = app.profile.settings.lastJoin, before = app.profile.settings.graphics;
+      app.setSetting('master', 0.2);
+      app.setSetting('shake', false);
+      app.rebind('reload', 'Mouse5');
+      app.setSetting('graphics', 'low');
+      document.getElementById('set-defaults').click();
+      await wait(300);
+      const s = app.profile.settings, def = defaultProfile().settings;
+      check('settings-reset', s.master === def.master && s.shake === def.shake && Object.keys(s.keys).length === 0 && s.graphics === def.graphics && s.fullscreen === true && s.lastJoin === join && app.backdrop.renderer.quality === 1 && +document.getElementById('set-master').value === def.master);
+      await app.setFullscreen(false);
+      app.setSetting('graphics', before);
+      app.rebind('map', 'KeyN');
+    }
     // bug reports: the filter, limits, cooldown and editing (app.smoke skips the real send)
     const bad = ['what the fuck', 'this is BULLSHIT', 'sh1t gun', 'f*ck', 'f u c k', 'fuuuuck', 'a$$', 'you ass'];
     const fine = ['the class menu', 'assassin bug in Scunthorpe', 'cockpit glitch', 'I hit a shot, it passed through', 'round 15 crash!'];
@@ -281,6 +334,33 @@ export async function runSmoke(app) {
         await wait(600);
         await shot('map1-loot');
         check('container-searched', !cont.full);
+        // Settings from the pause menu: opens over the paused game without the progress reset, Esc
+        // goes back to the pause menu, and graphics / controls changed there apply to the game at once
+        {
+          app.togglePause(true);
+          document.getElementById('pause-settings').click();
+          await wait(200);
+          const scr = document.getElementById('screen-settings');
+          check('pause-settings-opens', app.inGameSettings && scr.classList.contains('active') && getComputedStyle(document.getElementById('set-reset')).display === 'none' && app.session === s && s.paused);
+          await shot('02h-settings-in-game');
+          const before = app.profile.settings.graphics, other = before === 'low' ? 'high' : 'low';
+          const sel = document.getElementById('set-graphics');
+          sel.value = other;
+          sel.dispatchEvent(new Event('change'));
+          check('pause-settings-graphics-live', s.renderer.quality === (other === 'low' ? 0.6 : 1));
+          app.rebind('reload', 'KeyT');
+          check('pause-settings-keys-live', s.input.actByCode.KeyT === 'reload' && s.binds.reload === 'KeyT');
+          window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
+          await wait(200);
+          check('pause-settings-esc-back', !app.inGameSettings && !scr.classList.contains('active') && document.getElementById('overlay-pause').classList.contains('show'));
+          sel.value = before;
+          sel.dispatchEvent(new Event('change'));
+          app.setSetting('keys', {});
+          app.rebind('map', 'KeyN');
+          app.togglePause(false);
+          await wait(300);
+          check('pause-settings-resumed', !s.paused && s.renderer.quality === (before === 'low' ? 0.6 : 1));
+        }
         s.input.sample = () => botInput(g, 0, performance.now() / 1000);
         // spawn the boss right next to us for a screenshot, then force a win to see the end screen
         const b = g.spawnZombie('harvester', p.x + 3.5, p.z - 1, false);
@@ -426,6 +506,23 @@ export async function runSmoke(app) {
     const sx = me0.x;
     cs.input.sample = (aim) => ({ mx: -1, mz: 0, ax: aim ? aim.x : 0, az: aim ? aim.z : 0, fire: true, use: false, acts: {} });
     await wait(5000);
+    // co-op guest: Settings from the pause menu leave the match running (snapshots keep coming),
+    // a graphics change applies mid-match, and Back returns to the pause menu
+    {
+      app.togglePause(true);
+      document.getElementById('pause-settings').click();
+      const at0 = cs.snapAt, before = app.profile.settings.graphics, other = before === 'low' ? 'high' : 'low';
+      const sel = document.getElementById('set-graphics');
+      sel.value = other;
+      sel.dispatchEvent(new Event('change'));
+      await wait(600);
+      check('coop-settings-game-continues', app.inGameSettings && cs.snapAt > at0 && !cs.paused && cs.renderer.quality === (other === 'low' ? 0.6 : 1));
+      sel.value = before;
+      sel.dispatchEvent(new Event('change'));
+      document.querySelector('#screen-settings [data-go="main"]').click();
+      check('coop-settings-back', !app.inGameSettings && document.getElementById('overlay-pause').classList.contains('show'));
+      app.togglePause(false);
+    }
     clearInterval(tick);
     await shot('07-client-view');
     check('client-predicted-move', cs.pred && Math.abs(cs.pred.x - sx) > 2);

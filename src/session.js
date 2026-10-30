@@ -8,6 +8,7 @@ import { Renderer } from './render/renderer.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { resolveBinds } from './keybinds.js';
+import { renderQuality } from './gfx.js';
 
 const STEP = 1 / 60;
 const SNAP_INTERVAL = 50; // ms
@@ -37,6 +38,13 @@ export class Session {
     this.stats = { maxWave: 0 };
   }
 
+  // controls rebound from the pause menu
+  setBinds(keys) {
+    this.binds = resolveBinds(keys);
+    this.input.setBinds(this.binds);
+    this.hud.setKeys(this.binds);
+  }
+
   start() {
     const container = document.getElementById('game');
     container.innerHTML = '';
@@ -54,7 +62,8 @@ export class Session {
     }
     this.renderer = new Renderer(container);
     this.renderer.shakeEnabled = this.app.profile.settings.shake;
-    this.renderer.setGraphics(this.app.profile.settings.graphics);
+    // Low: fewer pixels and particles; High adapts the resolution if frames run slow
+    this.renderer.setGraphics(renderQuality(this.app.profile.settings.graphics));
     this.renderer.loadWorld(this.world, this.map);
     const hudRoot = document.getElementById('hud');
     hudRoot.style.display = 'block';

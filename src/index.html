@@ -32,6 +32,7 @@
         </div>
         <div class="profile-strip"><span id="main-name"></span><span id="main-salvage"></span><span id="main-progress"></span></div>
         <button data-go="bugs" class="bug-tab ghost">Bug Reports/Feedback</button>
+        <div class="beta-tag">Beta</div>
       </section>
 
       <!-- bug reports -->
@@ -124,18 +125,18 @@
           <label class="check"><input id="set-shake" type="checkbox" /> Screen shake</label>
           <label>Graphics
             <select id="set-graphics">
-              <option value="auto">Auto (lowers detail if the game slows down)</option>
-              <option value="high">High</option>
-              <option value="low">Low (fastest)</option>
+              <option value="low">Low (best performance)</option>
+              <option value="high">High (full detail)</option>
             </select>
           </label>
           <label class="check"><input id="set-fullscreen" type="checkbox" /> Fullscreen (F11)</label>
+          <button id="set-defaults">Reset settings to defaults</button>
           <button id="set-reset" class="danger">Reset all progress</button>
         </div>
         <div class="form panel binds">
           <div class="binds-head"><h3>Controls</h3><button id="set-keys-reset" class="ghost">Reset to defaults</button></div>
           <div id="set-keys" class="binds-grid"></div>
-          <p class="hint">Click a key, then press the new one (Esc cancels). Picking a key that's already used swaps the two. Arrow keys always move; 1 / 2 / 3, Esc and F11 can't be changed.</p>
+          <p class="hint">Click a key, then press the new one or a mouse side button (Esc cancels). Picking a key that's already used swaps the two. Arrow keys always move; 1 / 2 / 3, Esc and F11 can't be changed.</p>
         </div>
         </div>
       </section>
@@ -151,7 +152,7 @@
               <tr><td>Mouse</td><td>Aim</td></tr>
               <tr><td>Left click</td><td>Shoot (hold)</td></tr>
               <tr><td data-k="reload">R</td><td>Reload</td></tr>
-              <tr><td data-k="swap" data-k-suffix=" / 1 / 2 / Mouse wheel or middle / side button">Q / 1 / 2 / Mouse wheel or middle / side button</td><td>Swap weapon</td></tr>
+              <tr><td data-k="swap" data-k-suffix=" / 1 / 2 / Mouse wheel or middle click">Q / 1 / 2 / Mouse wheel or middle click</td><td>Swap weapon</td></tr>
               <tr><td>1 / 2 / 3</td><td>Pick a level-up card (when shown)</td></tr>
               <tr><td data-k="ability" data-k-suffix=" / Right click">F / Right click</td><td>Character ability</td></tr>
               <tr><td data-k="grenade">G</td><td>Throw grenade (at cursor)</td></tr>
@@ -160,9 +161,10 @@
               <tr><td data-k="score">Tab</td><td>Scoreboard</td></tr>
               <tr><td data-k="map">M</td><td>Map</td></tr>
               <tr><td>Ctrl + mouse wheel</td><td>Zoom</td></tr>
-              <tr><td>Esc</td><td>Pause / menu</td></tr>
+              <tr><td>Esc</td><td>Pause / menu (Settings are in the pause menu too)</td></tr>
+              <tr><td>F11</td><td>Fullscreen on / off (on by default)</td></tr>
             </table>
-            <p class="hint">Change any of these in Settings → Controls.</p>
+            <p class="hint">Change any of these in Settings → Controls: click an action, then press a key or a mouse side button (Mouse 4 / Mouse 5 do nothing until you bind them). Settings → Reset settings to defaults puts everything back.</p>
           </div>
           <div>
             <h3>Surviving</h3>
@@ -172,8 +174,17 @@
               <li>Guns are found by <b>searching</b> weapon racks, lockers, crates, car trunks and fallen survivors (look for the <b>✦ sparkle</b>, hold <b>E</b>). Guns roll a rarity — <span style="color:#d9d4c7">Common</span>, <span style="color:#6fd36a">Uncommon</span>, <span style="color:#4fa8ff">Rare</span>, <span style="color:#bb6cff">Epic</span>, <span style="color:#ffa53a">Legendary</span> — with more damage, bigger magazines and faster reloads. Military chests always hold Rare or better. Searched containers sometimes restock between rounds.</li>
               <li>Kills earn <b>XP</b>. Each level, pick one of three upgrades (1/2/3) — they stack for the rest of the run.</li>
               <li>Zombies drop power-ups: Max Ammo, Insta-Kill, Double Points and Kaboom.</li>
-              <li>Follow the <b>objective</b> (top-left, yellow beacons and the minimap) to progress the story and escape. Every map has a boss.</li>
-              <li>In co-op, downed players can be revived by holding <b>E</b> next to them. Dead players respawn next round.</li>
+              <li>Follow the <b>objective</b> (top-left, yellow beacons and the minimap) to progress the story and escape. Every map has a boss. Beat Ground Zero's story to unlock <b>Watch the Finale</b> under the map list.</li>
+              <li>Runs earn <b>Salvage</b>; spend it in <b>Characters &amp; Upgrades</b> to level up each survivor's ability.</li>
+              <li>In co-op, every guest readies up in the lobby before the host can start. A downed teammate has <b>45 seconds</b>: follow the red revive icon (on screen, at the screen edge with distance and time left, and on the minimap) and hold <b>E</b> next to them. Dead players respawn next round.</li>
+              <li>In co-op the pause menu doesn't stop the game for everyone else.</li>
+              <li>Errors and crashes are reported automatically, or send a report yourself with <b>Bug Reports/Feedback</b>.</li>
+            </ul>
+            <h3>Graphics</h3>
+            <ul>
+              <li><b>High</b> (default): full detail. It lowers its resolution by itself if the game starts to slow down.</li>
+              <li><b>Low</b>: fewer pixels and particles for the best frame rate on slower PCs.</li>
+              <li>Changes apply instantly, from the main menu or the pause menu during a game.</li>
             </ul>
           </div>
         </div>
@@ -196,6 +207,7 @@
       <div class="panel pause-box">
         <h2 id="pause-title">Paused</h2>
         <button id="pause-resume" class="big">Resume</button>
+        <button id="pause-settings">Settings</button>
         <label>Master volume <input id="pause-master" type="range" min="0" max="1" step="0.05" /></label>
         <button id="pause-quit" class="danger">Quit to Menu</button>
       </div>
