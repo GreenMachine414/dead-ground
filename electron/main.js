@@ -44,12 +44,14 @@ function profilePath() {
   return path.join(app.getPath('userData'), 'profile.json');
 }
 
-// start in fullscreen if the player left it on last time
+// Fullscreen is the default: start windowed only if the player turned it off (in a save from
+// since it became the default, settings version 2 - see App.init)
 function savedFullscreen() {
   try {
-    return !!JSON.parse(fs.readFileSync(profilePath(), 'utf8')).settings.fullscreen;
+    const s = JSON.parse(fs.readFileSync(profilePath(), 'utf8')).settings || {};
+    return s.gfxV !== 2 || s.fullscreen !== false;
   } catch {
-    return false;
+    return true;
   }
 }
 

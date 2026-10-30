@@ -9,7 +9,8 @@ import { Session } from './session.js';
 import { measureRefresh } from './render/renderer.js';
 import { esc } from './hud.js';
 import { runSmoke, runCrashTest } from './smoke.js';
-import { BINDS, RESERVED, resolveBinds, keyName, normCode } from './keybinds.js';
+import { BINDS, RESERVED, MOUSE_BUTTONS, resolveBinds, keyName, normCode } from './keybinds.js';
+import { GFX, GFX_VERSION, renderQuality } from './gfx.js';
 import { runPerf } from './perf.js';
 import { runTrailer, recordFinale } from './trailer.js';
 import { runStress } from './stresslive.js';
@@ -33,6 +34,19 @@ class App {
 
   async init() {
     this.profile = await loadProfile();
+    // Graphics: Low (best performance) or High (full detail). Saves from before these two tiers
+    // (Auto / High / Low) are moved over once - Auto becomes High - and the game became
+    // fullscreen by default then.
+    const st = this.profile.settings;
+    if (this.profile.isNew) st.gfxV = GFX_VERSION;
+    if (st.gfxV !== GFX_VERSION) {
+      st.graphics = st.graphics === 'low' ? 'low' : 'high';
+      st.fullscreen = true;
+      st.gfxV = GFX_VERSION;
+      this.save();
+    }
+    delete this.profile.isNew;
+    if (!GFX.includes(st.graphics)) st.graphics = 'high';
     this.audio.setVolumes(this.profile.settings);
     document.addEventListener('pointerdown', () => {
       this.audio.init();
@@ -40,7 +54,7 @@ class App {
       if (!this.session && !finalePlaying()) this.audio.startMusic('menu');
     });
     measureRefresh();
-    this.backdrop = new MenuBackdrop(document.getElementById('menu-bg'));
+    this.backdrop = new MenuBackdrop(document.getElementById('menu-bg'), renderQuality(st.graphics));
     this.backdrop.start();
     document.addEventListener('keydown', (e) => {
       if (e.code === 'F11') {
@@ -57,6 +71,7 @@ class App {
     $('#join-code').addEventListener('input', (e) => (e.target.value = normalizeCode(e.target.value)));
     $('#join-code').addEventListener('keydown', (e) => e.key === 'Enter' && this.joinGame());
     $('#pause-resume').addEventListener('click', () => this.togglePause(false));
+    $('#pause-settings').addEventListener('click', () => this.openGameSettings());
     $('#pause-quit').addEventListener('click', () => this.quitToMenu());
     $('#pause-master').addEventListener('input', (e) => this.setSetting('master', +e.target.value));
     $('#intro-go').addEventListener('click', () => this.closeIntro());
@@ -101,6 +116,8 @@ class App {
   }
 
   go(where) {
+    // Back from the settings opened in a game returns to the pause menu
+    if (where === 'main' && this.inGameSettings) return this.closeGameSettings();
     this.audio.init();
     this.audio.play('swap');
     switch (where) {
@@ -257,6 +274,47 @@ class App {
       this.save();
       this.toast('Progress reset');
     });
+    $('#set-defaults').addEventListener('click', () => this.resetSettings());
+  }
+
+  // Every setting on the Settings screen back to its default, applied at once (progress, the
+  // player's name and the remembered co-op address and port are kept)
+  resetSettings() {
+    const s = this.profile.settings, def = defaultProfile().settings;
+    this.profile.settings = { ...def, lastJoin: s.lastJoin, port: s.port, gfxV: GFX_VERSION };
+    this.audio.setVolumes(this.profile.settings);
+    this.setSetting('graphics', def.graphics);
+    this.setFullscreen(def.fullscreen);
+    if (this.session) {
+      this.session.setBinds(def.keys);
+      this.session.renderer.shakeEnabled = def.shake;
+    }
+    this.renderSettings();
+    this.save();
+    this.toast('Settings reset to defaults');
+  }
+
+  // The Settings screen over a paused game (solo or co-op). The game stays paused (solo) or keeps
+  // running without this player's input (co-op) until they leave the pause menu.
+  openGameSettings() {
+    if (!this.session) return;
+    this.inGameSettings = true;
+    this.screenBefore = this.screen;
+    $('#overlay-pause').classList.remove('show');
+    document.body.classList.add('ingame-settings');
+    this.show('settings');
+  }
+
+  // back to the pause menu (or, when the game is ending, just close)
+  closeGameSettings(ending) {
+    this.inGameSettings = false;
+    if (this.keyListen) this.keyListen();
+    document.body.classList.remove('ingame-settings');
+    this.hideScreens();
+    this.screen = this.screenBefore;
+    if (ending) return;
+    $('#pause-master').value = this.profile.settings.master;
+    $('#overlay-pause').classList.add('show');
   }
 
   renderSettings() {
@@ -277,11 +335,11 @@ class App {
     $('#set-keys').innerHTML = BINDS.map((b) => `<span>${b.label}</span><button data-bind="${b.id}">${esc(keyName(binds[b.id]))}</button>`).join('');
   }
 
-  // wait for the next key press and bind it to the button's action
+  // wait for the next key press (or mouse side button) and bind it to the button's action
   listenKey(btn) {
     if (this.keyListen) this.keyListen();
     btn.classList.add('listening');
-    btn.textContent = 'Press a key…';
+    btn.textContent = 'Press a key or side button…';
     const id = btn.dataset.bind;
     const onDown = (e) => {
       e.preventDefault();
@@ -292,12 +350,22 @@ class App {
       if (RESERVED.has(code)) return this.toast(`${keyName(code)} can't be rebound`);
       this.rebind(id, code);
     };
+    const onMouse = (e) => {
+      const code = MOUSE_BUTTONS[e.button];
+      if (!code) return;
+      e.preventDefault();
+      e.stopPropagation();
+      stop();
+      this.rebind(id, code);
+    };
     const stop = () => {
       window.removeEventListener('keydown', onDown, true);
+      window.removeEventListener('mousedown', onMouse, true);
       this.keyListen = null;
       this.renderKeys();
     };
     window.addEventListener('keydown', onDown, true);
+    window.addEventListener('mousedown', onMouse, true);
     this.keyListen = stop;
   }
 
@@ -419,7 +487,12 @@ class App {
     this.profile.settings[k] = v;
     this.audio.setVolumes(this.profile.settings);
     if (k === 'shake' && this.session) this.session.renderer.shakeEnabled = v;
-    if (k === 'graphics' && this.session) this.session.renderer.setGraphics(v);
+    if (k === 'keys' && this.session) this.session.setBinds(v);
+    // graphics apply at once: the running game (if any) and the menu backdrop
+    if (k === 'graphics') {
+      if (this.session) this.session.renderer.setGraphics(renderQuality(v));
+      if (this.backdrop) this.backdrop.setQuality(renderQuality(v));
+    }
     clearTimeout(this.saveT);
     this.saveT = setTimeout(() => this.save(), 400);
   }
@@ -788,6 +861,7 @@ class App {
   }
 
   endSession() {
+    if (this.inGameSettings) this.closeGameSettings(true);
     if (this.session) this.session.stop();
     this.session = null;
   }
@@ -813,6 +887,7 @@ class App {
 
   togglePause(force) {
     if (!this.session) return;
+    if (this.inGameSettings) return this.closeGameSettings(); // Esc in the settings: back to the pause menu
     if ($('#overlay-intro').classList.contains('show')) return this.closeIntro();
     const ov = $('#overlay-pause');
     const show = force !== undefined ? force : !ov.classList.contains('show');

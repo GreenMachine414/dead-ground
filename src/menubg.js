@@ -4,9 +4,17 @@ import { Renderer } from './render/renderer.js';
 import { createWorld, getMap, ZTYPES } from './game/sim.js';
 
 export class MenuBackdrop {
-  constructor(el) {
+  // quality: the renderer's quality mode for the graphics setting (see gfx.js)
+  constructor(el, quality) {
     this.el = el;
+    this.quality = quality;
     this.running = false;
+  }
+
+  // the graphics setting changed: applies to the running backdrop at once
+  setQuality(quality) {
+    this.quality = quality;
+    if (this.renderer) this.renderer.setGraphics(quality);
   }
 
   start() {
@@ -17,6 +25,7 @@ export class MenuBackdrop {
       const map = getMap(1);
       this.world = createWorld(map);
       this.renderer = new Renderer(this.el);
+      this.renderer.setGraphics(this.quality);
       this.renderer.zoom = 1.15;
       this.renderer.loadWorld(this.world, map);
       this.zeds = [];
