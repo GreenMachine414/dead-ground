@@ -1,4 +1,5 @@
-// Rebindable controls. Keys are KeyboardEvent.code values; profile.settings.keys stores only the
+// Rebindable controls. Keys are KeyboardEvent.code values (or Mouse4 / Mouse5 for the mouse side
+// buttons, which do nothing unless bound); profile.settings.keys stores only the
 // player's overrides, so new actions pick up their defaults automatically.
 export const BINDS = [
   { id: 'up', label: 'Move up', def: 'KeyW' },
@@ -6,7 +7,7 @@ export const BINDS = [
   { id: 'left', label: 'Move left', def: 'KeyA' },
   { id: 'right', label: 'Move right', def: 'KeyD' },
   { id: 'reload', label: 'Reload', def: 'KeyR' },
-  { id: 'swap', label: 'Swap weapon (also mouse wheel, middle / side buttons)', def: 'KeyQ' },
+  { id: 'swap', label: 'Swap weapon (also mouse wheel, middle button)', def: 'KeyQ' },
   { id: 'ability', label: 'Ability (also right click)', def: 'KeyF' },
   { id: 'grenade', label: 'Throw grenade', def: 'KeyG' },
   { id: 'melee', label: 'Knife', def: 'KeyV' },
@@ -22,6 +23,9 @@ export const RESERVED = new Set(['Escape', 'F11', 'Digit1', 'Digit2', 'Digit3', 
 const SAME = { ShiftRight: 'ShiftLeft', ControlRight: 'ControlLeft', AltRight: 'AltLeft', MetaRight: 'MetaLeft' };
 export const normCode = (code) => SAME[code] || code;
 
+// mouse side buttons (MouseEvent.button 3 = back, 4 = forward) as bindable codes
+export const MOUSE_BUTTONS = { 3: 'Mouse4', 4: 'Mouse5' };
+
 // action id -> key code, defaults merged with the player's overrides
 export function resolveBinds(overrides) {
   const out = {};
@@ -33,7 +37,7 @@ const NAMES = {
   ShiftLeft: 'Shift', ControlLeft: 'Ctrl', AltLeft: 'Alt', MetaLeft: 'Win', Space: 'Space', Tab: 'Tab',
   CapsLock: 'Caps', Enter: 'Enter', Backspace: 'Backspace', Backquote: '`', Minus: '-', Equal: '=',
   BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
-  ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+  ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Mouse4: 'Mouse 4', Mouse5: 'Mouse 5',
 };
 // short label for a key code: KeyW -> W, Digit4 -> 4, Numpad5 -> Num 5, ShiftLeft -> Shift
 export function keyName(code) {

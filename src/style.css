@@ -1722,3 +1722,36 @@ select {
   text-shadow: 0 3px 0 var(--edge), 0 0 24px rgba(0, 0, 0, 0.7); }
 #finale .fin-sub { font-family: var(--display); font-weight: 600; font-size: clamp(15px, 1.3vw, 28px); color: var(--parch); padding: 0.6em 1.6em; border-radius: 40px;
   background: rgba(36, 23, 15, 0.8); border: 3px solid var(--edge); }
+
+/* version label, bottom left of the main menu (display only) */
+.beta-tag {
+  position: absolute;
+  left: 26px;
+  bottom: 24px;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: rgba(40, 28, 22, 0.82);
+  border: 2px solid rgba(242, 181, 68, 0.75);
+  color: #f2b544;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Settings opened from the pause menu: over the paused game, without the progress reset, and a
+   solid backdrop so the HUD underneath doesn't show through */
+body.ingame-settings #set-reset {
+  display: none;
+}
+body.ingame-settings #screen-settings {
+  background: rgba(22, 15, 11, 0.9);
+}
+
+/* the hidden attribute always wins over layout rules */
+[hidden] {
+  display: none !important;
+}

@@ -8,6 +8,8 @@ const SCENES = [
   { map: 4, name: 'Whiteout Station (forest)', zoom: 1 },
   { map: 2, name: 'Dead End Downtown', zoom: 1 },
   { map: 2, name: 'Downtown grenade spam', zoom: 1, grenades: true },
+  { map: 3, name: 'Fort Ironside', zoom: 1 },
+  { map: 5, name: 'Ground Zero', zoom: 1 },
 ];
 
 function pct(arr, p) {
@@ -82,7 +84,9 @@ export async function runPerf(app, opts = {}) {
       };
       await wait(1500);
       measuring = true;
-      await wait(seconds * 1000);
+      await wait(seconds * 500);
+      await window.native.smokeShot(`perf-${app.profile.settings.graphics}-${SCENES.indexOf(sc)}-map${sc.map}`);
+      await wait(seconds * 500);
       measuring = false;
       clearInterval(keepHorde);
       const avg = deltas.reduce((a, b) => a + b, 0) / Math.max(1, deltas.length);
