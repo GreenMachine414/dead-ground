@@ -125,10 +125,12 @@
           <label class="check"><input id="set-shake" type="checkbox" /> Screen shake</label>
           <label>Graphics
             <select id="set-graphics">
-              <option value="low">Low (best performance)</option>
-              <option value="high">High (full detail)</option>
+              <option value="low">Low (2D, best performance)</option>
+              <option value="high">High (2D, full detail)</option>
+              <option value="ultra">Ultra (3D lighting, shadows and weather)</option>
             </select>
           </label>
+          <label id="set-bloom-row" hidden><span>Bloom (glow) <span id="set-bloom-val" class="range-val"></span></span><input id="set-bloom" type="range" min="0" max="1" step="0.05" /></label>
           <label class="check"><input id="set-fullscreen" type="checkbox" /> Fullscreen (F11)</label>
           <button id="set-defaults">Reset settings to defaults</button>
           <button id="set-reset" class="danger">Reset all progress</button>
@@ -182,9 +184,10 @@
             </ul>
             <h3>Graphics</h3>
             <ul>
-              <li><b>High</b> (default): full detail. It lowers its resolution by itself if the game starts to slow down.</li>
-              <li><b>Low</b>: fewer pixels and particles for the best frame rate on slower PCs.</li>
-              <li>Changes apply instantly, from the main menu or the pause menu during a game.</li>
+              <li><b>High</b> (default): the 2D look at full detail. It lowers its resolution by itself if the game starts to slow down.</li>
+              <li><b>Low</b>: 2D with fewer pixels and particles, for the best frame rate on slower PCs.</li>
+              <li><b>Ultra</b>: full 3D with real lighting, shadows, rain and snow, and glow. The <b>Bloom</b> slider sets how strong the glow is (0% turns it off).</li>
+              <li>Changes apply instantly, from the main menu or the pause menu during a game. In co-op everyone can use a different setting.</li>
             </ul>
           </div>
         </div>

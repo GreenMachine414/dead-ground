@@ -8,8 +8,8 @@ const SCENES = [
   { map: 4, name: 'Whiteout Station (forest)', zoom: 1 },
   { map: 2, name: 'Dead End Downtown', zoom: 1 },
   { map: 2, name: 'Downtown grenade spam', zoom: 1, grenades: true },
-  { map: 3, name: 'Fort Ironside', zoom: 1 },
-  { map: 5, name: 'Ground Zero', zoom: 1 },
+  { map: 3, name: 'Map 3', zoom: 1 },
+  { map: 5, name: 'Map 5', zoom: 1 },
 ];
 
 function pct(arr, p) {
@@ -36,9 +36,10 @@ export async function runPerf(app, opts = {}) {
       const s = app.session;
       const g = s.game;
       const r = s.renderer;
-      if (opts.vector) r.drawSolidCached = r.drawSolid; // compare against uncached prop drawing
+      if (opts.vector && !r.is3D) r.drawSolidCached = r.drawSolid; // compare against uncached prop drawing
       r.adaptQuality = () => {}; // measure at full quality
       r.zoom = sc.zoom;
+      if (r.is3D) r.prof = { ground: 0, sync: 0, gl: 0, overlay: 0, n: 0 };
       g.wave = 10;
       g.waveT = 1e9; // we spawn the horde ourselves
       const p = g.players[0];
@@ -85,7 +86,7 @@ export async function runPerf(app, opts = {}) {
       await wait(1500);
       measuring = true;
       await wait(seconds * 500);
-      await window.native.smokeShot(`perf-${app.profile.settings.graphics}-${SCENES.indexOf(sc)}-map${sc.map}`);
+      await window.native.smokeShot(`perf-${app.gfx}-${SCENES.indexOf(sc)}-map${sc.map}`);
       await wait(seconds * 500);
       measuring = false;
       clearInterval(keepHorde);
@@ -103,6 +104,7 @@ export async function runPerf(app, opts = {}) {
         zombies: g.zombies.length,
         quality: r.quality,
         canvas: `${r.canvas.width}x${r.canvas.height}`,
+        prof: r.prof && Object.fromEntries(Object.entries(r.prof).map(([k, v]) => [k, ["ground", "sync", "gl", "overlay"].includes(k) ? +(v / r.prof.n).toFixed(2) : Math.round(v)])),
       });
       app.endSession();
       await wait(300);

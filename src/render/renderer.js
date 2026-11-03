@@ -10,7 +10,7 @@ import { paintGround, PX } from './groundpaint.js';
 import * as S from './sprites.js';
 
 const BASE_U = 42; // css pixels per world unit at zoom 1
-const K = 0.55; // height -> screen offset factor
+export const K = 0.55; // height -> screen offset factor
 // where drawPerson puts the muzzle: the gun pivots 0.64 u above the feet and its barrel ends
 // 0.945 x the weapon's len (+0.1) along the aim
 const MUZZLE_H = 0.64 / K, GUN_TIP = 0.945;
@@ -29,7 +29,7 @@ const QUALITY = { high: 1, low: 0.6 };
 // `hot` is the bright tracer / lightning core, `dust` the sparkle colours around the gun (normal
 // blending, so they still read on bright ground like sand and snow), `aura` the glow and pulse ring.
 // XX, the max level, sparkles faster (`dustEvery`, seconds between motes at full quality).
-const FORGE_FX = [
+export const FORGE_FX = [
   null,
   {
     flame: '#c46aff', muzzle: '#e0a0ff', flash: '#c080ff', tracer: '#b060ff', ray: '#ff6aff', bolt: '#b070ff', hot: '#f0dcff',
@@ -42,12 +42,12 @@ const FORGE_FX = [
 ];
 const DUST_FLARE = 0.08;
 // projectile [colour, radius] by kind (forged rays and bolts take their forge colour instead)
-const PROJ = {
+export const PROJ = {
   frag: ['#4a5a3a', 0.15], grenade: ['#5a6a3a', 0.18], ray: ['#6aff8a', 0.2], bolt: ['#ff5a4a', 0.14],
   spit: ['#8aff4a', 0.24], rock: ['#8a7058', 0.45], rocket: ['#d8d8d8', 0.18], hook: ['#c8ccd2', 0.22], other: ['#ffffff', 0.15],
 };
 const DECAL_LIFE = 30, DECAL_FADE = 4, MAX_DECALS = 400; // ground splats: seconds, fade-out, cap
-const KNIFE_TIME = 0.2, KNIFE_ARC = 2.2; // knife swing: seconds, radians swept
+export const KNIFE_TIME = 0.2, KNIFE_ARC = 2.2; // knife swing: seconds, radians swept
 // flamethrower particles: life, drag, and the distance covered per unit of launch speed
 const FLAME_LIFE = 0.42, FLAME_DRAG = 0.8, FLAME_REACH = (1 - Math.exp(-FLAME_DRAG * FLAME_LIFE)) / FLAME_DRAG; // share of motes that are big flares with a white-hot glint
 const DUST_PULSE = 1.4; // seconds between ground pulse rings
@@ -85,6 +85,7 @@ export class Renderer {
     container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext('2d');
     this.zoom = 1;
+    this.muzzleH = MUZZLE_H; // muzzle effect height (the 3D renderer's guns sit higher)
     this.quality = 1; // lowered automatically if frames run slow
     this.frameMs = 16;
     this.slowT = 0;
@@ -264,6 +265,15 @@ export class Renderer {
 
   project(x, y, z) {
     return { x: this.sx(x) / this.dpr, y: (this.sy(z) - y * K * this.u) / this.dpr, vis: true };
+  }
+
+  // canvas position of a point h height-units above the ground, in a reused array
+  // (the 3D renderer projects through its camera instead)
+  toScreen(x, z, h) {
+    const o = this.scr || (this.scr = [0, 0]);
+    o[0] = this.sx(x);
+    o[1] = this.sy(z) - h * K * this.u;
+    return o;
   }
 
   // ---------------------------------------------------------------- effects api
@@ -785,7 +795,7 @@ export class Renderer {
       c.strokeStyle = p.p.s === 1 ? 'rgba(255,80,60,0.9)' : p.p.id === view.localId ? 'rgba(120,255,150,0.75)' : 'rgba(110,180,255,0.75)';
       c.lineWidth = u * 0.07;
       c.stroke();
-      if (p.p.sh > 0) {
+      if (p.p.sh > 0 && !this.is3D) {
         // Aegis shield: flashes red for a moment when it takes a hit, like any other damage
         S.ellipse(c, this.sx(p.x), this.sy(p.z) - u * 0.6, u * 0.62, u * 0.75);
         c.strokeStyle = this.time - (p.hurtT || -1) < 0.25 ? 'rgba(255,70,50,0.9)' : 'rgba(122,184,255,0.55)';
@@ -1917,15 +1927,7 @@ export class Renderer {
         c.stroke();
       }
     }
-    // rings
-    for (const r of this.rings) {
-      const f = r.life / r.max;
-      const rad = (r.r1 + (r.r0 - r.r1) * f) * u;
-      S.ellipse(c, this.sx(r.x), this.sy(r.z), rad, rad * (r.flat ? 0.5 : 1));
-      c.strokeStyle = S.rgba(r.col, f);
-      c.lineWidth = u * (r.w || 0.12);
-      c.stroke();
-    }
+    this.drawRings();
     // particles: normal ones first, then all glowing ones in a single additive pass
     const cw = this.canvas.width, ch = this.canvas.height;
     let glow = 0;
@@ -1939,6 +1941,19 @@ export class Renderer {
       c.globalCompositeOperation = 'source-over';
     }
     c.globalAlpha = 1;
+  }
+
+  // expanding rings; flat ones lie on the ground (squashed here, true circles on the 3D ground layer)
+  drawRings() {
+    const c = this.ctx, u = this.u, squash = this.is3D ? 1 : 0.5;
+    for (const r of this.rings) {
+      const f = r.life / r.max;
+      const rad = (r.r1 + (r.r0 - r.r1) * f) * u;
+      S.ellipse(c, this.sx(r.x), this.sy(r.z), rad, rad * (r.flat ? squash : 1));
+      c.strokeStyle = S.rgba(r.col, f);
+      c.lineWidth = u * (r.w || 0.12);
+      c.stroke();
+    }
   }
 
   drawParticle(p, cw, ch) {
@@ -2083,7 +2098,7 @@ export class Renderer {
     this.exclLabel = null;
     for (const [x, z, h, text, col, hpFrac, alpha] of labels) {
       c.globalAlpha = alpha;
-      const X = this.sx(x), Y = this.sy(z) - h * u * K * 1.25;
+      const [X, Y] = this.toScreen(x, z, h * 1.25);
       const wk = fs + '|' + text;
       let tw = this.textW.get(wk);
       if (tw === undefined) {
@@ -2108,7 +2123,7 @@ export class Renderer {
     for (const t of this.texts) {
       const f = t.life / t.max;
       const rise = (1 - f) * 1.2;
-      const X = this.sx(t.x), Y = this.sy(t.z) - (t.h + rise) * u * K * 1.4;
+      const [X, Y] = this.toScreen(t.x, t.z, (t.h + rise) * 1.4);
       const pop = f > 0.85 ? 1 + (f - 0.85) * 3 : 1;
       c.font = `800 ${t.size * u * pop}px Fredoka, Segoe UI, sans-serif`;
       c.globalAlpha = Math.min(1, f * 2.5);
@@ -2128,7 +2143,7 @@ export class Renderer {
     for (const o of this.players.values()) if (o.p.s === 1 && o.p.id !== view.localId) marks.push([o.x, o.z, 4, o.p.bl]);
     const blink = Math.floor(this.time * 4) % 2 === 0;
     for (const [x, z, type, bleed] of marks) {
-      const X = this.sx(x), Y = this.sy(z);
+      const [X, Y] = this.toScreen(x, z, 0);
       const col = type === 4 ? '#ff2a1a' : type === 2 ? '#ff5a4a' : type === 3 ? '#6ac8ff' : '#ffd65a';
       const onScreen = X > u && X < cw - u && Y > u * 2 && Y < ch - u;
       if (onScreen) {
@@ -2191,6 +2206,11 @@ export class Renderer {
   }
 
   // ---------------------------------------------------------------- events
+  // how far ahead of the player (along the aim) the drawn gun's barrel ends
+  muzzleD(wid) {
+    return WEAPONS[wid].len * GUN_TIP + 0.1;
+  }
+
   handleEvent(e, view) {
     const camD = (x, z) => Math.hypot(x - this.cam.x, z - this.cam.z);
     switch (e.k) {
@@ -2200,7 +2220,7 @@ export class Renderer {
         // the sim fires from where it has the player; the player is drawn smoothed / predicted, so
         // start the muzzle effects (and this shot's tracers) at the gun tip of the drawn player
         const o = this.players.get(e.p);
-        const ca = Math.cos(e.a), sa = Math.sin(e.a), D = w.len * GUN_TIP + 0.1;
+        const ca = Math.cos(e.a), sa = Math.sin(e.a), D = this.muzzleD(WIDS[e.w]), MH = this.muzzleH;
         const px = o ? o.x : e.x - ca * 0.6, pz = o ? o.z : e.z - sa * 0.6;
         const mx = px + ca * D, mz = pz + sa * D;
         this.shot = { x: e.x, z: e.z, mx, mz };
@@ -2213,13 +2233,13 @@ export class Renderer {
           const half = w.spread + 0.15;
           for (let i = 0; i < 4; i++) {
             const a = e.a + (Math.random() * 2 - 1) * half * 0.85, s = (reach / FLAME_REACH) * Math.sqrt(0.2 + Math.random() * 0.8);
-            this.emit(mx, mz, MUZZLE_H, Math.cos(a) * s, Math.sin(a) * s, 0.3, Math.random() < 0.4 ? '#ffe070' : fx ? fx.flame : '#ff7a2a', FLAME_LIFE, 0.2, { grow: 2.6, drag: FLAME_DRAG, glow: true });
+            this.emit(mx, mz, MH, Math.cos(a) * s, Math.sin(a) * s, 0.3, Math.random() < 0.4 ? '#ffe070' : fx ? fx.flame : '#ff7a2a', FLAME_LIFE, 0.2, { grow: 2.6, drag: FLAME_DRAG, glow: true });
           }
         } else {
-          this.emit(mx, mz, MUZZLE_H, 0, 0, 0, fx ? fx.muzzle : '#fff0b0', 0.06, 0.35, { glow: true });
-          if (w.type !== 'chain') this.emit(px + ca * 0.3, pz + sa * 0.3, MUZZLE_H, -sa * 2, ca * 2, 2, '#e0b040', 0.7, 0.06, { g: 12 });
+          this.emit(mx, mz, MH, 0, 0, 0, fx ? fx.muzzle : '#fff0b0', 0.06, 0.35, { glow: true });
+          if (w.type !== 'chain') this.emit(px + ca * 0.3, pz + sa * 0.3, MH, -sa * 2, ca * 2, 2, '#e0b040', 0.7, 0.06, { g: 12 });
           // forged: a couple of sparks kick out of the muzzle
-          if (fx) this.burst(mx, mz, MUZZLE_H, 2, fx.dust, 3, 0.3, 0.07, { drag: 4, shape: 'spark' });
+          if (fx) this.burst(mx, mz, MH, 2, fx.dust, 3, 0.3, 0.07, { drag: 4, shape: 'spark' });
         }
         this.flashes.push({ x: mx, z: mz, r: 3, col: fx ? fx.flash : w.type === 'flame' ? '#ff8a3a' : '#ffd890', a: 0.6, life: 0.06, max: 0.06 });
         break;

@@ -5,10 +5,11 @@
 import { Game, createWorld, getMap, stepMovement, playerSpeed, WIDS, mergeActs, swapTarget } from './game/sim.js';
 import { WEAPONS } from './data/weapons.js';
 import { Renderer } from './render/renderer.js';
+import { Renderer3D, webglOK } from './render/renderer3d.js';
+import { renderQuality } from './gfx.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { resolveBinds } from './keybinds.js';
-import { renderQuality } from './gfx.js';
 
 const STEP = 1 / 60;
 const SNAP_INTERVAL = 50; // ms
@@ -38,6 +39,38 @@ export class Session {
     this.stats = { maxWave: 0 };
   }
 
+  // Ultra graphics = the 3D renderer (falls back to 2D if this PC can't run WebGL 2)
+  makeRenderer(container) {
+    const s = this.app.profile.settings;
+    this.renderer = null;
+    if (this.app.gfx === 'ultra' && webglOK()) {
+      try {
+        this.renderer = new Renderer3D(container);
+      } catch (err) {
+        console.error(err);
+        container.innerHTML = '';
+      }
+    }
+    if (!this.renderer) this.renderer = new Renderer(container);
+    this.renderer.shakeEnabled = s.shake;
+    if (this.renderer.setBloom) this.renderer.setBloom(s.bloom);
+    // Low: fewer pixels and particles; High and Ultra adapt the resolution if frames run slow
+    this.renderer.setGraphics(renderQuality(this.app.gfx));
+    this.renderer.loadWorld(this.world, this.map);
+  }
+
+  // Graphics changed from the pause menu: retune the renderer, or swap 2D <-> 3D in place. The
+  // renderer only draws the snapshots, so the game (and everyone else in co-op) carries on.
+  applyGraphics() {
+    const r = this.renderer;
+    if (!!r.is3D === (this.app.gfx === 'ultra' && webglOK())) return r.setGraphics(renderQuality(this.app.gfx));
+    const zoom = r.zoom, container = document.getElementById('game');
+    r.dispose();
+    container.innerHTML = '';
+    this.makeRenderer(container);
+    this.renderer.zoom = zoom;
+  }
+
   // controls rebound from the pause menu
   setBinds(keys) {
     this.binds = resolveBinds(keys);
@@ -60,11 +93,7 @@ export class Session {
       this.world = this.game.world;
       this.snap = this.game.snapshot();
     }
-    this.renderer = new Renderer(container);
-    this.renderer.shakeEnabled = this.app.profile.settings.shake;
-    // Low: fewer pixels and particles; High adapts the resolution if frames run slow
-    this.renderer.setGraphics(renderQuality(this.app.profile.settings.graphics));
-    this.renderer.loadWorld(this.world, this.map);
+    this.makeRenderer(container);
     const hudRoot = document.getElementById('hud');
     hudRoot.style.display = 'block';
     this.hud = new Hud(hudRoot);

@@ -4,9 +4,9 @@ import { Game } from './game/sim.js';
 import { MAPS } from './data/maps.js';
 import { Net, PROTOCOL } from './net.js';
 import { resolveBinds } from './keybinds.js';
+import { defaultProfile } from './profile.js';
 import { Input } from './input.js';
 import { GFX } from './gfx.js';
-import { defaultProfile } from './profile.js';
 import { hasVulgar, checkReport, sendReport, reportPayload } from './bugreport.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,8 +70,6 @@ export async function runSmoke(app) {
     app.rebind('map', 'KeyN');
     await wait(200);
     await shot('02b-settings');
-    // fullscreen is the default for new players
-    check('fullscreen-default', defaultProfile().settings.fullscreen === true);
     // mouse side buttons: bindable like keys, and do nothing while unbound
     {
       const btn = document.querySelector('#set-keys [data-bind="reload"]');
@@ -94,31 +92,63 @@ export async function runSmoke(app) {
       app.setSetting('keys', {});
       app.rebind('map', 'KeyN');
     }
-    // graphics: Low / High, applied to the menu backdrop at once
+    // graphics: Low / High (2D) / Ultra (3D), and a change applies at once (no prompt, no
+    // restart): the menu backdrop swaps renderer or quality, 3D portraits appear; then back
     {
-      const sel = document.getElementById('set-graphics'), before = app.profile.settings.graphics;
-      check('gfx-two-options', [...sel.options].map((o) => o.value).join() === GFX.join() && sel.value === before);
-      for (const target of [before === 'low' ? 'high' : 'low', before]) {
+      const sel = document.getElementById('set-graphics');
+      const before = app.gfx;
+      const is3d = () => !!(app.backdrop.renderer && app.backdrop.renderer.is3D);
+      sel.value = before;
+      check('gfx-three-options', [...sel.options].map((o) => o.value).join() === GFX.join());
+      check('gfx-no-restart-prompt', !document.getElementById('overlay-gfx'));
+      for (const target of [...GFX.filter((g) => g !== before), before]) {
+        const t0 = performance.now();
         sel.value = target;
         sel.dispatchEvent(new Event('change'));
-        await wait(200);
-        check(`gfx-live-${target}`, app.profile.settings.graphics === target && app.backdrop.renderer.quality === (target === 'low' ? 0.6 : 1));
+        const ms = Math.round(performance.now() - t0);
+        await wait(300);
+        const r = app.backdrop.renderer;
+        check(`gfx-instant-${target}`, app.gfx === target && is3d() === (target === 'ultra') && r.quality === (target === 'low' ? 0.6 : 1) && app.profile.settings.graphics === target && (getComputedStyle(document.getElementById('set-bloom-row')).display === 'none') === (target !== 'ultra'));
+        (report.gfxSwitchMs || (report.gfxSwitchMs = {}))[target] = ms;
+        if (target === 'ultra') check('gfx-3d-portraits', !!app.portraits3d && app.portrait('brick') === app.portraits3d.brick);
+        await shot('02f-gfx-' + target);
       }
+      await app.save();
     }
     // Reset settings to defaults: everything on the Settings screen back at once, the co-op address kept
     {
-      const join = app.profile.settings.lastJoin, before = app.profile.settings.graphics;
+      const before = app.gfx, join = app.profile.settings.lastJoin;
       app.setSetting('master', 0.2);
       app.setSetting('shake', false);
+      app.setSetting('bloom', 1);
       app.rebind('reload', 'Mouse5');
-      app.setSetting('graphics', 'low');
+      app.setGraphics('low');
       document.getElementById('set-defaults').click();
       await wait(300);
       const s = app.profile.settings, def = defaultProfile().settings;
-      check('settings-reset', s.master === def.master && s.shake === def.shake && Object.keys(s.keys).length === 0 && s.graphics === def.graphics && s.fullscreen === true && s.lastJoin === join && app.backdrop.renderer.quality === 1 && +document.getElementById('set-master').value === def.master);
+      check('settings-reset', s.master === def.master && s.shake === def.shake && s.bloom === def.bloom && Object.keys(s.keys).length === 0 && s.graphics === def.graphics && app.gfx === def.graphics && s.fullscreen === true && s.lastJoin === join && app.backdrop.renderer.quality === 1 && +document.getElementById('set-master').value === def.master);
       await app.setFullscreen(false);
-      app.setSetting('graphics', before);
+      app.setGraphics(before);
       app.rebind('map', 'KeyN');
+      await wait(300);
+    }
+    // bloom slider: only shown with the 3D renderer, applies live, 0 switches the pass off
+    {
+      const row = document.getElementById('set-bloom-row'), slider = document.getElementById('set-bloom');
+      const r = app.backdrop.renderer, keep = app.profile.settings.bloom;
+      check('bloom-slider-shown-in-3d', (getComputedStyle(row).display !== 'none') === app.use3d);
+      if (app.use3d) {
+        slider.value = 0;
+        slider.dispatchEvent(new Event('input'));
+        const off = !r.bloom.enabled;
+        slider.value = 1;
+        slider.dispatchEvent(new Event('input'));
+        check('bloom-slider-live', off && r.bloom.enabled && Math.abs(r.bloom.strength - 1.1) < 1e-6 && app.profile.settings.bloom === 1);
+        await wait(250);
+        await shot('02g-bloom-max');
+        slider.value = keep;
+        slider.dispatchEvent(new Event('input'));
+      }
     }
     // bug reports: the filter, limits, cooldown and editing (app.smoke skips the real send)
     const bad = ['what the fuck', 'this is BULLSHIT', 'sh1t gun', 'f*ck', 'f u c k', 'fuuuuck', 'a$$', 'you ass'];
@@ -343,11 +373,12 @@ export async function runSmoke(app) {
           const scr = document.getElementById('screen-settings');
           check('pause-settings-opens', app.inGameSettings && scr.classList.contains('active') && getComputedStyle(document.getElementById('set-reset')).display === 'none' && app.session === s && s.paused);
           await shot('02h-settings-in-game');
-          const before = app.profile.settings.graphics, other = before === 'low' ? 'high' : 'low';
-          const sel = document.getElementById('set-graphics');
+          const before = app.gfx, other = before === 'ultra' ? 'high' : 'ultra';
+          const sel = document.getElementById('set-graphics'), r0 = s.renderer;
           sel.value = other;
           sel.dispatchEvent(new Event('change'));
-          check('pause-settings-graphics-live', s.renderer.quality === (other === 'low' ? 0.6 : 1));
+          await wait(300);
+          check('pause-settings-graphics-live', s.renderer !== r0 && !!s.renderer.is3D === (other === 'ultra'));
           app.rebind('reload', 'KeyT');
           check('pause-settings-keys-live', s.input.actByCode.KeyT === 'reload' && s.binds.reload === 'KeyT');
           window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
@@ -359,7 +390,7 @@ export async function runSmoke(app) {
           app.rebind('map', 'KeyN');
           app.togglePause(false);
           await wait(300);
-          check('pause-settings-resumed', !s.paused && s.renderer.quality === (before === 'low' ? 0.6 : 1));
+          check('pause-settings-resumed', !s.paused && !!s.renderer.is3D === (before === 'ultra'));
         }
         s.input.sample = () => botInput(g, 0, performance.now() / 1000);
         // spawn the boss right next to us for a screenshot, then force a win to see the end screen
@@ -506,17 +537,17 @@ export async function runSmoke(app) {
     const sx = me0.x;
     cs.input.sample = (aim) => ({ mx: -1, mz: 0, ax: aim ? aim.x : 0, az: aim ? aim.z : 0, fire: true, use: false, acts: {} });
     await wait(5000);
-    // co-op guest: Settings from the pause menu leave the match running (snapshots keep coming),
-    // a graphics change applies mid-match, and Back returns to the pause menu
+    // co-op guest: Settings from the pause menu leave the match running (snapshots keep coming), a
+    // graphics swap works mid-match, and Back returns to the pause menu
     {
       app.togglePause(true);
       document.getElementById('pause-settings').click();
-      const at0 = cs.snapAt, before = app.profile.settings.graphics, other = before === 'low' ? 'high' : 'low';
+      const at0 = cs.snapAt, before = app.gfx, other = before === 'ultra' ? 'high' : 'ultra';
       const sel = document.getElementById('set-graphics');
       sel.value = other;
       sel.dispatchEvent(new Event('change'));
       await wait(600);
-      check('coop-settings-game-continues', app.inGameSettings && cs.snapAt > at0 && !cs.paused && cs.renderer.quality === (other === 'low' ? 0.6 : 1));
+      check('coop-settings-game-continues', app.inGameSettings && cs.snapAt > at0 && !cs.paused && !!cs.renderer.is3D === (other === 'ultra'));
       sel.value = before;
       sel.dispatchEvent(new Event('change'));
       document.querySelector('#screen-settings [data-go="main"]').click();

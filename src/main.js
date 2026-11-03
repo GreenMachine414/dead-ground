@@ -10,12 +10,14 @@ import { measureRefresh } from './render/renderer.js';
 import { esc } from './hud.js';
 import { runSmoke, runCrashTest } from './smoke.js';
 import { BINDS, RESERVED, MOUSE_BUTTONS, resolveBinds, keyName, normCode } from './keybinds.js';
-import { GFX, GFX_VERSION, renderQuality } from './gfx.js';
 import { runPerf } from './perf.js';
 import { runTrailer, recordFinale } from './trailer.js';
 import { runStress } from './stresslive.js';
 import { playFinale, finalePlaying, stopFinale } from './finale.js';
 import { portraitURL } from './render/sprites.js';
+import { webglOK } from './render/renderer3d.js';
+import { GFX, GFX_VERSION, renderQuality } from './gfx.js';
+import { portraits3D, modelLineup, lineupCells, gunLineup } from './render/portrait3d.js';
 import { MenuBackdrop } from './menubg.js';
 import { BUG_MAX, BUG_KEEP, AUTO_MAX, checkReport, newReportId, sendReport, errorReportText } from './bugreport.js';
 
@@ -34,9 +36,9 @@ class App {
 
   async init() {
     this.profile = await loadProfile();
-    // Graphics: Low (best performance) or High (full detail). Saves from before these two tiers
-    // (Auto / High / Low) are moved over once - Auto becomes High - and the game became
-    // fullscreen by default then.
+    // Graphics: Low (2D, best performance), High (2D, full detail), Ultra (3D). Changing it
+    // applies at once (see setGraphics). Saves from before the Low / High tiers (Auto / High /
+    // Low) are moved over once - Auto becomes High - and the game became fullscreen by default then.
     const st = this.profile.settings;
     if (this.profile.isNew) st.gfxV = GFX_VERSION;
     if (st.gfxV !== GFX_VERSION) {
@@ -47,6 +49,13 @@ class App {
     }
     delete this.profile.isNew;
     if (!GFX.includes(st.graphics)) st.graphics = 'high';
+    const args = window.native ? await window.native.args() : {};
+    this.gfx = GFX.includes(args.gfx) ? args.gfx : st.graphics;
+    // Ultra: the menu backdrop and portraits are 3D too (all sharing one WebGL context);
+    // a PC that can't run WebGL 2 gets High instead
+    if (this.gfx === 'ultra' && !webglOK()) this.gfx = 'high';
+    this.use3d = this.gfx === 'ultra';
+    if (this.use3d) this.ensurePortraits();
     this.audio.setVolumes(this.profile.settings);
     document.addEventListener('pointerdown', () => {
       this.audio.init();
@@ -54,7 +63,7 @@ class App {
       if (!this.session && !finalePlaying()) this.audio.startMusic('menu');
     });
     measureRefresh();
-    this.backdrop = new MenuBackdrop(document.getElementById('menu-bg'), renderQuality(st.graphics));
+    this.backdrop = new MenuBackdrop(document.getElementById('menu-bg'), this.use3d, () => this.profile.settings.bloom, renderQuality(this.gfx));
     this.backdrop.start();
     document.addEventListener('keydown', (e) => {
       if (e.code === 'F11') {
@@ -83,7 +92,7 @@ class App {
     this.bindSettings();
     this.bindBugs();
     this.show('main');
-    const args = window.native ? await window.native.args() : {};
+    if (args.inspect3d) this.inspectModels();
     if (args.smoke) runSmoke(this);
     if (args.perf) runPerf(this, { vector: args.vector });
     if (args.crashtest) runCrashTest(this, args.crashtest === 'live');
@@ -253,7 +262,11 @@ class App {
     });
     for (const k of ['master', 'sfx', 'music']) $('#set-' + k).addEventListener('input', (e) => this.setSetting(k, +e.target.value));
     $('#set-shake').addEventListener('change', (e) => this.setSetting('shake', e.target.checked));
-    $('#set-graphics').addEventListener('change', (e) => this.setSetting('graphics', e.target.value));
+    $('#set-graphics').addEventListener('change', (e) => this.setGraphics(e.target.value));
+    $('#set-bloom').addEventListener('input', (e) => {
+      this.setSetting('bloom', +e.target.value);
+      $('#set-bloom-val').textContent = Math.round(e.target.value * 100) + '%';
+    });
     $('#set-fullscreen').addEventListener('change', (e) => this.setFullscreen(e.target.checked));
     $('#set-keys').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-bind]');
@@ -283,7 +296,8 @@ class App {
     const s = this.profile.settings, def = defaultProfile().settings;
     this.profile.settings = { ...def, lastJoin: s.lastJoin, port: s.port, gfxV: GFX_VERSION };
     this.audio.setVolumes(this.profile.settings);
-    this.setSetting('graphics', def.graphics);
+    this.setGraphics(def.graphics);
+    this.setSetting('bloom', def.bloom);
     this.setFullscreen(def.fullscreen);
     if (this.session) {
       this.session.setBinds(def.keys);
@@ -326,6 +340,10 @@ class App {
     $('#set-shake').checked = s.shake;
     $('#set-fullscreen').checked = s.fullscreen;
     $('#set-graphics').value = s.graphics;
+    // bloom only exists in the 3D renderer: shown while it's the one running
+    $('#set-bloom-row').hidden = !this.use3d;
+    $('#set-bloom').value = s.bloom;
+    $('#set-bloom-val').textContent = Math.round(s.bloom * 100) + '%';
     this.renderKeys();
   }
 
@@ -488,13 +506,60 @@ class App {
     this.audio.setVolumes(this.profile.settings);
     if (k === 'shake' && this.session) this.session.renderer.shakeEnabled = v;
     if (k === 'keys' && this.session) this.session.setBinds(v);
-    // graphics apply at once: the running game (if any) and the menu backdrop
-    if (k === 'graphics') {
-      if (this.session) this.session.renderer.setGraphics(renderQuality(v));
-      if (this.backdrop) this.backdrop.setQuality(renderQuality(v));
-    }
+    if (k === 'bloom') for (const r of [this.session && this.session.renderer, this.backdrop && this.backdrop.renderer]) if (r && r.setBloom) r.setBloom(v);
     clearTimeout(this.saveT);
     this.saveT = setTimeout(() => this.save(), 400);
+  }
+
+  // Graphics switch instantly: the menu backdrop and portraits change right away and the next
+  // game uses the chosen renderer (the setting is only reachable from the menus)
+  setGraphics(v) {
+    if (v === 'ultra' && !webglOK()) {
+      this.toast("3D graphics aren't supported on this PC");
+      v = $('#set-graphics').value = 'high';
+    }
+    this.setSetting('graphics', v);
+    if (v === this.gfx) return;
+    this.gfx = v;
+    this.use3d = v === 'ultra';
+    if (this.use3d) this.ensurePortraits(); // before the 3D backdrop takes the shared canvas
+    this.backdrop.setMode(this.use3d, renderQuality(v));
+    if (this.session) this.session.applyGraphics();
+    $('#set-bloom-row').hidden = !this.use3d;
+  }
+
+  // 3D character pictures: made the first time 3D is used, then kept
+  ensurePortraits() {
+    if (this.portraits3d) return;
+    try {
+      this.portraits3d = portraits3D();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  // a survivor's card picture: 3D on High graphics, the 2D sprite otherwise
+  portrait(id) {
+    return (this.portraits3d && this.portraits3d[id]) || portraitURL(id);
+  }
+
+  // --inspect3d: every 3D character from the game's angle and the front, saved as a screenshot
+  async inspectModels() {
+    if (!this.use3d) return;
+    const cells = lineupCells();
+    const img = document.createElement('img');
+    Object.assign(img.style, { position: 'fixed', left: '0', top: '0', width: '100vw', height: '100vh', zIndex: 999 });
+    document.body.appendChild(img);
+    for (let p = 0; p * 7 < cells.length; p++) {
+      img.src = modelLineup(cells.slice(p * 7, p * 7 + 7), 1880, 1000).toDataURL();
+      await new Promise((r) => setTimeout(r, 400));
+      await window.native.smokeShot('inspect-3d-models-' + (p + 1));
+    }
+    img.src = gunLineup(1880, 1000).toDataURL();
+    await new Promise((r) => setTimeout(r, 400));
+    await window.native.smokeShot('inspect-3d-guns');
+    img.remove();
+    window.native.smokeDone({ ok: true, pages: Math.ceil(cells.length / 7) });
   }
 
   // ---------------------------------------------------------------- upgrades
@@ -506,7 +571,7 @@ class App {
       const lvl = p.levels[id];
       const cost = upgradeCost(lvl);
       return `<div class="upg panel">
-        <img class="portrait" src="${portraitURL(id)}" alt="${c.name}">
+        <img class="portrait" src="${this.portrait(id)}" alt="${c.name}">
         <h3>${c.name}</h3><div class="role">${c.role}</div>
         <div class="ab">${c.ability} — Level ${lvl}/${MAX_LEVEL}</div>
         <div class="desc">${c.desc}</div>
@@ -729,7 +794,7 @@ class App {
     $('#char-pick').innerHTML = CHARACTER_IDS.map((id) => {
       const c = CHARACTERS[id];
       return `<button class="char-card ${id === myChar ? 'selected' : ''}" data-char="${id}">
-        <img class="portrait" src="${portraitURL(id)}" alt="${c.name}">
+        <img class="portrait" src="${this.portrait(id)}" alt="${c.name}">
         <div class="cname">${c.name}</div><div class="crole">${c.role}</div>
         <div class="cab">${c.ability}</div><div class="clvl">Level ${this.profile.levels[id]}/${MAX_LEVEL}</div>
       </button>`;

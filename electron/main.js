@@ -12,8 +12,11 @@ const crashTest = crashArg ? crashArg.split('=')[1] || 'stub' : null;
 const isTrailer = process.argv.includes('--trailer') || isFinale;
 // live co-op stress test: --stress=host or --stress=guest1..3 (see src/stresslive.js)
 const stressRole = (process.argv.find((a) => a.startsWith('--stress=')) || '').slice(9) || null;
-const isSmoke = process.argv.includes('--smoke') || isPerf || isTrailer || !!stressRole || !!crashTest; // perf, the trailer and stress run like a smoke test
+const isSmoke = process.argv.includes('--smoke') || process.argv.includes('--inspect3d') || isPerf || isTrailer || !!stressRole || !!crashTest; // perf, the trailer and stress run like a smoke test
 const isDev = process.argv.includes('--dev');
+const isInspect = process.argv.includes('--inspect3d'); // renders every 3D character model to a screenshot
+// --gfx=low|high starts with that graphics setting whatever the saved one is (test runs)
+const gfxArg = (process.argv.find((a) => a.startsWith('--gfx=')) || '').slice(6) || null;
 // the benchmark measures real frame cost, so it runs without the vsync frame cap
 if (isPerf) {
   app.commandLine.appendSwitch('disable-frame-rate-limit');
@@ -132,7 +135,7 @@ ipcMain.handle('app:fullscreen', (_e, on) => {
   win.setFullScreen(next);
   return next;
 });
-ipcMain.handle('app:args', () => ({ smoke: isSmoke && !isPerf && !isTrailer && !stressRole && !crashTest, perf: isPerf, trailer: isTrailer, finale: isFinale, stress: stressRole, crashtest: crashTest, vector: process.argv.includes('--vector'), dev: isDev }));
+ipcMain.handle('app:args', () => ({ smoke: isSmoke && !isInspect && !isPerf && !isTrailer && !stressRole && !crashTest, perf: isPerf, trailer: isTrailer, finale: isFinale, stress: stressRole, crashtest: crashTest, vector: process.argv.includes('--vector'), dev: isDev, gfx: gfxArg, inspect3d: isInspect }));
 
 // Smoke test: the renderer reports when it wants screenshots taken.
 ipcMain.handle('smoke:shot', async (_e, name) => {

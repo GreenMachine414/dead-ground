@@ -92,7 +92,7 @@ const OUT = 'rgba(40,30,30,0.85)';
 // ------------------------------------------------------------------ guns
 const gunCache = new Map();
 // Forge level paint (index = level): X violet, XX crimson, each with a glowing seam and hot core
-const FORGE_PAINT = [
+export const FORGE_PAINT = [
   null,
   { body: '#9b59d0', metal: '#d6b0ff', seam: '#c47cff', core: '#f0dcff' },
   { body: '#b3122a', metal: '#ff8a80', seam: '#ff5a4a', core: '#ffd6cc' },
